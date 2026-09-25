@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://classroominsight/contract/schema.json",
+  "title": "ClassroomInsight Contract Schema",
+  "description": "Frozen shared contract for the ClassroomInsight multi-agent system. Defines the shared student-state object and the output contracts for Person C agents.",
+
+  "$defs": {
+
+    "ApproachUsed": {
+      "title": "ApproachUsed",
+      "description": "The intervention approach delivered to a student. Use underscores exactly as shown.",
+      "type": "string",
+      "enum": [
+        "worked_example",
+        "analogy",
+        "visual_description",
+        "direct_explanation"
+      ]
+    },
+
+    "StatusValue": {
+      "title": "StatusValue",
+      "description": "Lifecycle status of a student in the intervention/verification loop.",
+      "type": "string",
+      "enum": [
+        "diagnosed",
+        "intervened",
+        "verifying",
+        "verified",
+        "escalated"
+      ]
+    },
+
+    "VerificationResult": {
+      "title": "VerificationResult",
+      "description": "Outcome of the verification probe. Must be a flat enum string — never an object.",
+      "type": "string",
+      "enum": [
+        "true_mastery",
+        "surface_mastery",
+        "unresolved",
+        "pending"
+      ]
+    },
+
+    "StudentState": {
+      "title": "StudentState",
+      "description": "Shared student-state object. Written exclusively by Person B (loop_controller.py) into shared/live_state.json. Read by Person C. Must contain exactly these 10 fields.",
+      "type": "object",
+      "required": [
+        "student_id",
+        "topic",
+        "misconception",
+        "status",
+        "attempts",
+        "resource_given",
+        "approach_used",
+        "previous_approaches",
+        "verification_result",
+        "flagged_false_mastery"
+      ],
+      "additionalProperties": false,
+      "properties": {
+
+        "student_id": {
+          "description": "Unique student identifier.",
+          "type": "string"
+        },
+
+        "topic": {
+          "description": "Current learning topic where the misconception was observed.",
+          "type": "string"
+        },
+
+        "misconception": {
+          "description": "The diagnosed misconception string.",
+          "type": "string"
+        },
+
+        "status": {
+          "description": "Current state in the intervention/verification lifecycle. Must be one of the allowed enum values. 'verifying' is a distinct intermediate state between 'intervened' and a verification result. 'escalated' is set when verification_result is 'unresolved'. False mastery uses status='verified' combined with flagged_false_mastery=true.",
+          "$ref": "#/$defs/StatusValue"
+        },
+
+        "attempts": {
+          "description": "Number of intervention attempts. Incremented each time a new intervention begins.",
+          "type": "integer",
+          "minimum": 0
+        },
+
+        "resource_given": {
+          "description": "A flat string describing the resource or intervention delivered to the student. MUST NOT be a nested object.",
+          "type": "string"
+        },
+
+        "approach_used": {
+          "description": "The most recently used intervention approach. Top-level field using underscore naming.",
+          "$ref": "#/$defs/ApproachUsed"
+        },
+
+        "previous_approaches": {
+          "description": "Persistent list of all intervention approaches already used for the current misconception loop. Allows the recommender to avoid repeating an approach. The most recent approach also appears in approach_used.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApproachUsed"
+          }
+        },
+
+        "verification_result": {
+          "description": "Outcome of the most recent verification probe. Must be a flat enum string — never an object. Set to 'pending' until verification completes.",
+          "$ref": "#/$defs/VerificationResult"
+        },
+
+        "flagged_false_mastery": {
+          "description": "Set to true when verification_result is 'surface_mastery'. Persistent — remains true even after status transitions to 'verified'. Allows teachers to identify students who demonstrated surface mastery.",
+          "type": "boolean"
+        }
+      }
+    },
+
+    "LiveState": {
+      "title": "LiveState",
+      "description": "Contents of shared/live_state.json. A JSON array of StudentState objects. Written exclusively by Person B's loop_controller.py after every successful advance().",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StudentState"
+      }
+    },
+
+    "ClassroomInsightOutput": {
+      "title": "ClassroomInsightOutput",
+      "description": "Output contract for person-c-classroom/classroom_insight_agent.py. A ranked list of classroom-level misconceptions, sorted by student_count descending.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["misconception", "student_count", "topic"],
+        "additionalProperties": false,
+        "properties": {
+          "misconception": {
+            "description": "The misconception string.",
+            "type": "string"
+          },
+          "student_count": {
+            "description": "Number of students sharing this misconception on this topic.",
+            "type": "integer",
+            "minimum": 1
+          },
+          "topic": {
+            "description": "The topic where this misconception was observed.",
+            "type": "string"
+          }
+        }
+      }
+    },
+
+    "RootCauseOutput": {
+      "title": "RootCauseOutput",
+      "description": "Output contract for person-c-classroom/root_cause_agent.py. Identifies downstream topics affected by a misconception via reverse traversal of shared/prereq_graph.json.",
+      "type": "object",
+      "required": ["downstream_topics", "urgency", "teacher_explanation"],
+      "additionalProperties": false,
+      "properties": {
+        "downstream_topics": {
+          "description": "Alphabetically sorted list of topics that directly or indirectly depend on the affected topic. Does not include the original topic itself. Empty if no downstream topics exist.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "urgency": {
+          "description": "High if len(downstream_topics) >= URGENCY_HIGH_THRESHOLD (2), low otherwise.",
+          "type": "string",
+          "enum": ["high", "low"]
+        },
+        "teacher_explanation": {
+          "description": "Deterministic, template-based explanation grounded only in the actual downstream_topics list. Must not introduce topics absent from downstream_topics.",
+          "type": "string"
+        }
+      }
+    },
+
+    "AssessmentQualityOutput": {
+      "title": "AssessmentQualityOutput",
+      "description": "Output contract for person-c-classroom/assessment_quality_agent.py. Analyzes one question's answer distribution for potential ambiguity. Constants: SAME_WRONG_ANSWER_THRESHOLD=0.60, MIN_STUDENTS_FOR_FLAG=3.",
+      "type": "object",
+      "required": ["question_id", "flagged", "possibly_ambiguous_question", "reasoning"],
+      "additionalProperties": false,
+      "properties": {
+        "question_id": {
+          "description": "Identifier for the question being analyzed.",
+          "type": "string"
+        },
+        "flagged": {
+          "description": "True when the most-selected answer option accounts for >= SAME_WRONG_ANSWER_THRESHOLD of all responses AND total responses >= MIN_STUDENTS_FOR_FLAG.",
+          "type": "boolean"
+        },
+        "possibly_ambiguous_question": {
+          "description": "True only when flagged is true. Must be false whenever flagged is false.",
+          "type": "boolean"
+        },
+        "reasoning": {
+          "description": "Concise explanation of the flagging decision grounded in the actual answer distribution.",
+          "type": "string"
+        }
+      }
+    }
+
+  },
+
+  "type": "object",
+  "description": "Top-level schema document. Use $defs to reference individual contracts.",
+  "properties": {
+    "student_state":             { "$ref": "#/$defs/StudentState" },
+    "live_state":                { "$ref": "#/$defs/LiveState" },
+    "classroom_insight_output":  { "$ref": "#/$defs/ClassroomInsightOutput" },
+    "root_cause_output":         { "$ref": "#/$defs/RootCauseOutput" },
+    "assessment_quality_output": { "$ref": "#/$defs/AssessmentQualityOutput" }
+  }
+}
