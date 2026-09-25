@@ -1,0 +1,26 @@
+{
+  "fractions_basic_concept": {
+    "prereqs": []
+  },
+  "equivalent_fractions": {
+    "prereqs": ["fractions_basic_concept"]
+  },
+  "fraction_addition": {
+    "prereqs": ["fractions_basic_concept", "equivalent_fractions"]
+  },
+  "fraction_multiplication": {
+    "prereqs": ["fractions_basic_concept"]
+  },
+  "ratios": {
+    "prereqs": ["fractions_basic_concept"]
+  },
+  "proportions": {
+    "prereqs": ["ratios"]
+  },
+  "percentages": {
+    "prereqs": ["fractions_basic_concept", "proportions"]
+  },
+  "decimal_multiplication": {
+    "prereqs": ["fractions_basic_concept"]
+  }
+}
