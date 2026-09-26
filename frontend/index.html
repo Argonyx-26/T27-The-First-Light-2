@@ -820,6 +820,772 @@
       const ClassroomDetailView = ({ classroom, teacherAssessments, session, onBack }) => {
         const [roomTab, setRoomTab] = React.useState('students');
         const [classroomStudents, setClassroomStudents] = React.useState([]);
+        const [classroomInsights, setClassroomInsights] = React.useState(null);
+        const [loadingStudents, setLoadingStudents] = React.useState(true);
+
+        React.useEffect(() => {
+          if (!classroom || !session) return;
+          const fetchStudents = async () => {
+            setLoadingStudents(true);
+            try {
+              const res = await fetch(`/api/classroom/students?classroom_id=${classroom.id}`, {
+                headers: { Authorization: `Bearer ${session.access_token}` }
+              });
+              const data = await res.json();
+              setClassroomStudents(Array.isArray(data) ? data : []);
+            } catch (e) { console.error('Could not load students', e); }
+            setLoadingStudents(false);
+          };
+          fetchStudents();
+        }, [classroom?.id, session]);
+
+        React.useEffect(() => {
+          if (roomTab === 'insights' && classroom && session) {
+            const fetchInsights = async () => {
+              try {
+                const res = await fetch(`/api/teacher/insights?classroom_id=${classroom.id}`, {
+                  headers: { Authorization: `Bearer ${session.access_token}` }
+                });
+                const data = await res.json();
+                if (data.success) {
+                   const rc = (data.support_needed || []).map(s => ({
+                     root_cause: `${s.student_name} struggles with ${s.topic}: ${s.learning_gap}`,
+                     recommended_action: s.status === 'unresolved' ? 'Needs intervention' : 'In progress'
+                   }));
+                   setClassroomInsights({ ...data, rootCauses: rc });
+                }
+              } catch (e) {}
+            };
+            fetchInsights();
+          }
+        }, [roomTab, classroom?.id, session]);
+
+        const classroomAssessments = teacherAssessments.filter(a => a.classroom_id === classroom.id || a.status === 'published');
+        return (
+          <div className="max-w-3xl mx-auto py-16 animate-fade-in text-center">
+             <div className="bg-white p-10 rounded-2xl shadow-sm border border-borderlight">
+                <h2 className="text-2xl font-serif-custom font-bold text-navy mb-4">No Classroom Connected</h2>
+                <p className="text-muted text-lg mb-6">Your Google Classroom will load automatically. If it hasn't appeared yet, please sign out and sign back in to grant Classroom access.</p>
+             </div>
+          </div>
+        );
+      }
+      
+      const [title, setTitle] = useState('');
+      const [topic, setTopic] = useState('');
+      const [description, setDescription] = useState('');
+      const [questions, setQuestions] = useState([]);
+      
+      const [genSubtopic, setGenSubtopic] = useState('');
+      const [genCount, setGenCount] = useState(3);
+      const [genDiff, setGenDiff] = useState('medium');
+      const [generating, setGenerating] = useState(false);
+      const [regenIndex, setRegenIndex] = useState(-1);
+      const [saving, setSaving] = useState(false);
+      const [saveSuccess, setSaveSuccess] = useState('');
+
+      const handleGenerate = async () => {
+        if (!topic) return alert("Please specify a Topic first.");
+        setGenerating(true);
+        try {
+          const res = await fetch('/api/generate-questions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({
+              topic: topic,
+              subtopic: genSubtopic,
+              num_questions: genCount,
+              difficulty: genDiff
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setQuestions([...questions, ...data.questions]);
+          } else {
+            alert('Error generating questions: ' + data.error);
+          }
+        } catch (e) { alert('Failed to generate questions'); }
+        setGenerating(false);
+      };
+
+      const handleRegenerateOne = async (index) => {
+        setRegenIndex(index);
+        try {
+          const res = await fetch('/api/generate-questions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({
+              topic: topic || questions[index].topic,
+              subtopic: genSubtopic,
+              num_questions: 1,
+              difficulty: questions[index].difficulty || genDiff
+            })
+          });
+          const data = await res.json();
+          if (data.success && data.questions.length > 0) {
+            const updated = [...questions];
+            updated[index] = data.questions[0];
+            setQuestions(updated);
+          }
+        } catch (e) { }
+        setRegenIndex(-1);
+      };
+
+      const updateQuestion = (index, field, value) => {
+        const updated = [...questions];
+        updated[index][field] = value;
+        setQuestions(updated);
+      };
+
+      const updateOption = (qIndex, optIndex, value) => {
+        const updated = [...questions];
+        const oldVal = updated[qIndex].options[optIndex];
+        updated[qIndex].options[optIndex] = value;
+        if (updated[qIndex].correct_answer === oldVal && oldVal !== "") {
+            updated[qIndex].correct_answer = value;
+        }
+        setQuestions(updated);
+      };
+
+      const setCorrectAnswer = (qIndex, optIndex) => {
+        const updated = [...questions];
+        updated[qIndex].correct_answer = updated[qIndex].options[optIndex];
+        setQuestions(updated);
+      };
+
+      const removeQuestion = (index) => {
+        setQuestions(questions.filter((_, i) => i !== index));
+      };
+
+      const handleSave = async (status, classroom_id = null) => {
+        setSaving(status);
+        setSaveSuccess('');
+        try {
+          const res = await fetch('/api/assessments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ title, topic, description, questions, status, classroom_id })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setSaveSuccess(status === 'published' ? 'Assessment published and assigned to classroom!' : 'Draft saved.');
+            if (status === 'published') {
+              setTitle(''); setTopic(''); setDescription(''); setQuestions([]);
+              if (onSaved) setTimeout(() => onSaved(), 1500);
+            }
+          } else {
+            alert('Error saving assessment: ' + data.error);
+          }
+        } catch (e) { alert('Failed to save assessment'); }
+        setSaving(false);
+      };
+
+
+      return (
+        <div className="max-w-4xl mx-auto py-8 animate-fade-in">
+          <h2 className="text-3xl font-serif-custom font-bold text-navy mb-8">Create Assessment</h2>
+          
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-borderlight mb-8">
+            <h3 className="text-xl font-semibold text-navy mb-4">Assessment Details</h3>
+            <div className="grid grid-cols-2 gap-6 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1">Assessment Title *</label>
+                <input type="text" className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-lavender outline-none transition" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Midterm Quiz" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1">Topic *</label>
+                <input type="text" className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-lavender outline-none transition" value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. Physics" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-muted mb-1">Description (optional)</label>
+              <textarea className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-lavender outline-none transition" rows="2" value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief instructions for students..."></textarea>
+            </div>
+          </div>
+
+          <div className="bg-[#f8f7fb] p-6 rounded-2xl shadow-sm border border-indigo-100 mb-8">
+            <h3 className="text-xl font-semibold text-navy mb-4 flex items-center gap-2">
+               ✨ AI Question Generator
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-muted mb-1">Subtopic (optional focus)</label>
+                <input type="text" className="w-full border p-2 rounded-lg" value={genSubtopic} onChange={e => setGenSubtopic(e.target.value)} placeholder="e.g. Kinematics" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1">Difficulty</label>
+                <select className="w-full border p-2 rounded-lg" value={genDiff} onChange={e => setGenDiff(e.target.value)}>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1">Number of Questions</label>
+                <input type="number" className="w-full border p-2 rounded-lg" value={genCount} onChange={e => setGenCount(parseInt(e.target.value))} min="1" max="10" />
+              </div>
+            </div>
+            <button onClick={handleGenerate} disabled={generating || !topic} className="w-full md:w-auto bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 disabled:opacity-50 transition shadow-md">
+              {generating ? "Generating..." : "Generate Questions"}
+            </button>
+            {!topic && <p className="text-dangerbg text-xs mt-2">Topic is required to generate questions.</p>}
+          </div>
+
+          {questions.length > 0 && (
+            <div className="mb-8 space-y-6">
+              <div className="flex justify-between items-end mb-4">
+                 <h3 className="text-2xl font-semibold text-navy">Review Questions ({questions.length})</h3>
+              </div>
+              {questions.map((q, idx) => (
+                <div key={idx} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm relative group">
+                  <div className="absolute top-4 right-4 flex gap-2">
+                    <button onClick={() => handleRegenerateOne(idx)} disabled={regenIndex === idx} className="text-xs font-semibold text-navy bg-lavender px-3 py-1 rounded hover:bg-opacity-80 transition disabled:opacity-50">
+                      {regenIndex === idx ? "..." : "Regenerate"}
+                    </button>
+                    <button onClick={() => removeQuestion(idx)} className="text-xs font-semibold text-dangerbg bg-red-50 px-3 py-1 rounded hover:bg-red-100 transition">
+                      Delete
+                    </button>
+                  </div>
+                  
+                  <div className="mb-4 pr-32">
+                    <label className="block text-sm font-bold text-navy mb-1">Question {idx + 1}</label>
+                    <textarea className="w-full border border-transparent hover:border-borderlight focus:border-lavender p-2 rounded outline-none resize-y transition bg-gray-50 font-medium" rows="2" value={q.question_text} onChange={e => updateQuestion(idx, 'question_text', e.target.value)} />
+                  </div>
+                  
+                  <div className="space-y-3 mb-6 pl-4">
+                    {q.options.map((opt, i) => {
+                      const isCorrect = opt === q.correct_answer && opt.trim() !== "";
+                      return (
+                        <div key={i} className="flex items-center gap-3">
+                          <input 
+                            type="radio" 
+                            name={`correct-${idx}`} 
+                            checked={isCorrect} 
+                            onChange={() => setCorrectAnswer(idx, i)}
+                            className="w-4 h-4 text-navy focus:ring-navy" 
+                          />
+                          <input 
+                            type="text" 
+                            className={`flex-1 border p-2 rounded outline-none transition ${isCorrect ? 'border-successbg bg-green-50/30 font-semibold' : 'border-gray-200 hover:border-gray-300'}`} 
+                            value={opt} 
+                            onChange={e => updateOption(idx, i, e.target.value)} 
+                            placeholder={`Option ${['A','B','C','D'][i]}`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  <div className="bg-indigo-50/50 p-4 rounded-lg border border-indigo-100">
+                    <div className="mb-3">
+                      <label className="block text-xs font-bold text-navy uppercase tracking-wider mb-1">Explanation (Teacher Only)</label>
+                      <textarea className="w-full border border-white/50 bg-white/50 p-2 rounded text-sm outline-none focus:bg-white transition" rows="2" value={q.explanation || ''} onChange={e => updateQuestion(idx, 'explanation', e.target.value)} placeholder="Why is this correct?" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-navy uppercase tracking-wider mb-1">Misconception Target (Teacher Only)</label>
+                      <input type="text" className="w-full border border-white/50 bg-white/50 p-2 rounded text-sm outline-none focus:bg-white transition" value={q.misconception_target || ''} onChange={e => updateQuestion(idx, 'misconception_target', e.target.value)} placeholder="e.g. Addition instead of multiplication" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="pt-4 border-t border-borderlight">
+            {saveSuccess && (
+              <div className="mb-4 bg-green-50 border border-green-200 text-green-800 px-5 py-3 rounded-lg font-medium animate-fade-in">
+                ✓ {saveSuccess}
+              </div>
+            )}
+            {saving === 'assigning' ? (
+               <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100 flex flex-col gap-4 animate-fade-in">
+                 <h4 className="font-bold text-navy text-lg">Assign to Classroom</h4>
+                 {classrooms && classrooms.length > 0 ? (
+                   <>
+                     <select id="assign-select" className="w-full p-3 rounded-lg border outline-none">
+                       {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                     </select>
+                     <div className="flex gap-4">
+                       <button onClick={() => setSaving(false)} className="bg-white text-navy px-6 py-2 rounded-lg font-bold border border-borderlight shadow-sm">Cancel</button>
+                       <button onClick={() => {
+                          const cid = document.getElementById('assign-select').value;
+                          handleSave('published', cid);
+                       }} className="bg-successbg text-white px-8 py-2 rounded-lg font-bold hover:bg-opacity-90 transition shadow-md">
+                         Publish & Assign
+                       </button>
+                     </div>
+                   </>
+                 ) : (
+                   <div>
+                     <p className="text-dangerbg text-sm mb-4">You have no classrooms to assign this to.</p>
+                     <button onClick={() => setSaving(false)} className="bg-white text-navy px-6 py-2 rounded-lg font-bold border border-borderlight shadow-sm">Cancel</button>
+                   </div>
+                 )}
+               </div>
+            ) : (
+               <div className="flex gap-4">
+                 <button onClick={() => handleSave('draft')} disabled={saving || questions.length === 0 || !title} className="bg-white border border-borderlight text-navy px-8 py-3 rounded-lg font-bold hover:bg-gray-50 disabled:opacity-50 transition shadow-sm">
+                   {saving === 'draft' ? "Saving..." : "Save Draft"}
+                 </button>
+                 <button onClick={() => setSaving('assigning')} disabled={saving || questions.length === 0 || !title} className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 disabled:opacity-50 transition shadow-md">
+                   Publish Assessment
+                 </button>
+               </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const App = () => {
+      // Auth State
+      const [session, setSession] = useState(null);
+      const [role, setRole] = useState(null);
+      const [authLoading, setAuthLoading] = useState(true);
+      const [supabaseClient, setSupabaseClient] = useState(null);
+
+      // Navigation State
+      const [activeTab, setActiveTab] = useState('overview');
+
+      // Data State
+      const [students, setStudents] = useState([]);
+      const [classrooms, setClassrooms] = useState([]);
+      const [activeClassroom, setActiveClassroom] = useState(null);
+            const [studentAssessments, setStudentAssessments] = useState([]);
+            const [teacherAssessments, setTeacherAssessments] = useState([]);
+      const [teacherInsights, setTeacherInsights] = useState(null);
+      const [takingAssessment, setTakingAssessment] = useState(null);
+      const [takingData, setTakingData] = useState(null);
+      const [takingAnswers, setTakingAnswers] = useState({});
+      const [takingIndex, setTakingIndex] = useState(0);
+      const [takingResult, setTakingResult] = useState(null);
+            const [studentLearning, setStudentLearning] = useState([]);
+      const [studentIncorrect, setStudentIncorrect] = useState([]);
+      const [practiceGap, setPracticeGap] = useState(null);
+      const [practiceData, setPracticeData] = useState(null);
+      const [practiceAnswer, setPracticeAnswer] = useState('');
+            const [practiceFeedback, setPracticeFeedback] = useState(null);
+      const [practiceGenerating, setPracticeGenerating] = useState(false);
+      const [followUpGaps, setFollowUpGaps] = useState([]);
+      const [followUpIndex, setFollowUpIndex] = useState(0);
+      const [followUpMode, setFollowUpMode] = useState(false);
+
+      
+      const [testTopic, setTestTopic] = useState('');
+      const [testDiff, setTestDiff] = useState('medium');
+      const [testCount, setTestCount] = useState(3);
+      const [isGeneratingTest, setIsGeneratingTest] = useState(false);
+      // Practice Mode State
+      const [practiceModeTopic, setPracticeModeTopic] = useState('');
+      const [practiceModeNum, setPracticeModeNum] = useState(3);
+      const [isPracticeModeActive, setIsPracticeModeActive] = useState(false);
+      const [pmQuestions, setPmQuestions] = useState([]);
+      const [pmBaseIndex, setPmBaseIndex] = useState(0);
+      const [pmStep, setPmStep] = useState(0); // 0=Base, 1=Near, 2=Far, 3=Novel
+      const [pmActiveQuestion, setPmActiveQuestion] = useState(null);
+      const [pmSelected, setPmSelected] = useState('');
+      const [pmFeedback, setPmFeedback] = useState(null);
+      const [pmLoading, setPmLoading] = useState(false);
+      const [pmDone, setPmDone] = useState(false);
+
+      const [misconceptions, setMisconceptions] = useState([]);
+      const [rootCauses, setRootCauses] = useState([]);
+      const [insightsOverview, setInsightsOverview] = useState(null);
+      const [loading, setLoading] = useState(true);
+            const [importing, setImporting] = useState(false);
+      const [classroomConnectState, setClassroomConnectState] = useState(null); // { status: 'success'|'error', msg: '', detail: '' }
+
+      useEffect(() => {
+        const initAuth = async () => {
+          try {
+            const res = await fetch("/api/config");
+            const config = await res.json();
+            if (config.SUPABASE_URL && config.SUPABASE_ANON_KEY) {
+              const supabase = window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
+              setSupabaseClient(supabase);
+
+              // Check active session
+              const { data: { session } } = await supabase.auth.getSession();
+              if (session) {
+                await syncIdentity(session);
+              } else {
+                setAuthLoading(false);
+              }
+
+              // Listen for changes
+              supabase.auth.onAuthStateChange(async (_event, newSession) => {
+                if (newSession && (!session || newSession.access_token !== session.access_token)) {
+                  await syncIdentity(newSession);
+                } else if (!newSession) {
+                  setSession(null);
+                  setRole(null);
+                }
+              });
+            }
+          } catch (e) {
+            console.error("Auth init failed", e);
+            setAuthLoading(false);
+          }
+        };
+        initAuth();
+      }, []);
+
+      const syncIdentity = async (activeSession) => {
+        try {
+          const res = await fetch("/api/auth/sync", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${activeSession.access_token}`
+            }
+          });
+          
+          if (res.ok) {
+            const data = await res.json();
+            setSession(activeSession);
+            setRole(data.role);
+            // Optionally store data.user_id
+          } else {
+            const err = await res.json();
+            alert("Login Failed: " + (err.error || "Unknown error"));
+            supabaseClient?.auth.signOut();
+          }
+        } catch (e) {
+          console.error("Sync error", e);
+        } finally {
+          setAuthLoading(false);
+        }
+      };
+
+      const handleLogin = async () => {
+        if (!supabaseClient) return;
+        await supabaseClient.auth.signInWithOAuth({ 
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin + '/index.html',
+            scopes: 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly https://www.googleapis.com/auth/classroom.profile.emails'
+          }
+        });
+      };
+
+      const handleLogout = async () => {
+        if (!supabaseClient) return;
+        await supabaseClient.auth.signOut();
+        window.location.reload();
+      };
+
+      const loadData = async () => {
+        try {
+          const headers = { "Authorization": `Bearer ${session.access_token}` };
+          const pt = session.provider_token ? `?provider_token=${encodeURIComponent(session.provider_token)}` : '';
+          const [resStudents, resClassrooms] = await Promise.all([
+            fetch("/api/students"),
+            fetch(`/api/classrooms${pt}`, { headers })
+          ]);
+          const dataStudents = await resStudents.json();
+          const dataClassrooms = await resClassrooms.json();
+          
+          const resAssessments = await fetch("/api/teacher/assessments", { headers });
+          const dataAssessments = await resAssessments.json();
+
+          const resInsights = await fetch("/api/teacher/insights", { headers });
+          const dataInsights = await resInsights.json();
+          
+          setStudents(dataStudents || []);
+          setClassrooms(Array.isArray(dataClassrooms) ? dataClassrooms : []);
+          setTeacherAssessments(dataAssessments || []);
+          if (dataInsights && dataInsights.success) {
+             setInsightsOverview(dataInsights.overview);
+             setMisconceptions(dataInsights.common_gaps || []);
+             // The backend returns support_needed instead of rootCauses. We will map support_needed -> rootCauses for now, or just render support_needed.
+             const rc = (dataInsights.support_needed || []).map(s => ({
+               root_cause: `${s.student_name} struggles with ${s.topic}: ${s.learning_gap}`,
+               recommended_action: s.status === 'unresolved' ? 'Needs intervention' : 'In progress'
+             }));
+             setRootCauses(rc);
+          }
+        } catch (e) {
+          console.error("Failed to fetch", e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        if (!session) return;
+        
+        const providerToken = session.provider_token || '';
+
+        const loadTeacherClassrooms = async () => {
+           const headers = { "Authorization": `Bearer ${session.access_token}` };
+           try {
+             const ptParam = providerToken ? `?provider_token=${encodeURIComponent(providerToken)}` : '';
+             const resClassrooms = await fetch(`/api/classrooms${ptParam}`, { headers });
+             const dataClassrooms = await resClassrooms.json();
+             setClassrooms(Array.isArray(dataClassrooms) ? dataClassrooms : []);
+           } catch (e) { console.error("Error loading classrooms", e); }
+        };
+
+        const loadStudentData = async () => {
+           const headers = { "Authorization": `Bearer ${session.access_token}` };
+           try {
+             const resAssessments = await fetch("/api/student/assessments", { headers });
+             const dataAssessments = await resAssessments.json();
+             setStudentAssessments(dataAssessments || []);
+             
+             const resLearning = await fetch("/api/student/learning", { headers });
+             const dataLearning = await resLearning.json();
+             if (dataLearning.states) {
+               setStudentLearning(dataLearning.states);
+               setStudentIncorrect(dataLearning.incorrect_answers || []);
+             } else {
+               setStudentLearning(dataLearning || []);
+               setStudentIncorrect([]);
+             }
+
+             // Also fetch student's classrooms
+             const resClassrooms = await fetch("/api/classrooms", { headers });
+             const dataClassrooms = await resClassrooms.json();
+             setClassrooms(Array.isArray(dataClassrooms) ? dataClassrooms : []);
+           } catch (e) { console.error("Error loading student data", e); }
+        };
+
+        if (role === 'teacher') {
+          loadData();
+          loadTeacherClassrooms();
+        } else if (role === 'student') {
+          loadStudentData();
+        }
+      }, [session, role, activeTab]);
+
+      const handleConnect = async () => {
+        setImporting(true);
+        setClassroomConnectState({ status: 'loading', msg: "Connecting to Google Classroom...", detail: "A browser window will open for you to grant access. Please complete it and return here." });
+        try {
+          const res = await fetch("/api/classroom/connect", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${session.access_token}` }
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            if (data.imported === 0) {
+              setClassroomConnectState({ status: 'error', msg: "No classrooms found.", detail: data.message || "Your Google Classroom account has no active courses." });
+            } else {
+              setClassroomConnectState({ status: 'success', msg: `Google Classroom connected`, detail: `${data.imported} classroom${data.imported !== 1 ? 's' : ''} imported successfully.` });
+              loadData();
+            }
+          } else {
+            const msg = data.error || "Unknown error";
+            if (msg.includes("permission") || msg.includes("denied")) {
+              setClassroomConnectState({ status: 'error', msg: "Permission denied.", detail: "Google Classroom permission was denied. Please reconnect and allow access." });
+            } else if (msg.includes("not found") || msg.includes("configured")) {
+              setClassroomConnectState({ status: 'error', msg: "Google Classroom isn't configured correctly.", detail: "Please check the Google connection settings." });
+            } else {
+              setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: msg });
+            }
+          }
+        } catch (e) {
+          setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: "Network error reaching the server. Make sure the server is running." });
+        }
+        setImporting(false);
+      };
+      
+
+
+
+      const falseMastery = students.filter(s => s.flagged_false_mastery);
+      const activeStudents = students.filter(s => s.status !== "pending");
+
+      // Framer Motion variants
+      const containerVariants = {
+        hidden: { opacity: 0 },
+        show: {
+          opacity: 1,
+          transition: { staggerChildren: 0.1 }
+        }
+      };
+
+      const itemVariants = {
+        hidden: { opacity: 0, y: 15 },
+        show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+      };
+
+      if (authLoading) {
+        return (
+          <div className="min-h-screen bg-page flex items-center justify-center">
+            <div className="text-navy font-semibold text-xl animate-pulse">ClassroomInsight Workspace Loading...</div>
+          </div>
+        );
+      }
+
+      if (!session) {
+        return (
+          <div className="min-h-screen bg-page flex flex-col items-center justify-center p-6 relative overflow-hidden text-center">
+            
+            <div className="relative z-10 max-w-2xl w-full mx-auto">
+              <div className="w-20 h-20 rounded-2xl bg-navy mx-auto mb-8 flex items-center justify-center text-white font-bold text-4xl font-serif-custom shadow-lg">
+                C
+              </div>
+              <h1 className="text-4xl md:text-5xl font-serif-custom font-bold text-navy mb-6 tracking-tight">ClassroomInsight</h1>
+              
+              <h2 className="text-xl md:text-2xl font-serif-custom font-semibold text-navy mb-4">
+                Understand how students think. Turn every answer into insight.
+              </h2>
+              
+              <p className="text-muted text-base md:text-lg mb-12 max-w-xl mx-auto leading-relaxed">
+                Create intelligent assessments, identify learning gaps, and give every student the right practice.
+              </p>
+              
+              <div className="max-w-sm mx-auto">
+                <button 
+                  onClick={handleLogin}
+                  className="w-full bg-navy text-white py-4 rounded-xl font-bold hover:bg-opacity-90 transition-all shadow-md flex items-center justify-center gap-3 mb-4"
+                >
+                  <svg className="w-5 h-5 bg-white rounded-full p-1 text-navy" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                  Continue with Google
+                </button>
+                <p className="text-sm font-medium text-muted">
+                  For teachers and students
+                </p>
+              </div>
+            </div>
+            
+            {/* Minimal aesthetic background shapes using existing variables */}
+            <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-lavender rounded-full opacity-40 blur-3xl mix-blend-multiply pointer-events-none"></div>
+            <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-[#E8E6F5] rounded-full opacity-50 blur-3xl mix-blend-multiply pointer-events-none"></div>
+          </div>
+        );
+      }
+
+
+      const userName = session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || "User";
+      const userRoleDisplay = role === 'teacher' ? 'Teacher' : 'Student';
+
+      // --- TEACHER VIEWS ---
+      const renderTeacherHome = () => {
+        const hasClassrooms = classrooms.length > 0;
+        return (
+          <div className="space-y-8 animate-fade-in">
+            <h2 className="text-3xl font-serif-custom font-bold text-navy">Welcome back, {userName}</h2>
+            {hasClassrooms ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">My Classrooms</h3>
+                  <p className="text-3xl font-bold text-lavender">{classrooms.length}</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">Active Assessments</h3>
+                  <p className="text-3xl font-bold text-lavender">0</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">Recent Activity</h3>
+                  <p className="text-3xl font-bold text-lavender">{misconceptions.length} Insights</p>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white p-8 rounded-xl shadow-sm border border-borderlight text-center">
+                <p className="text-muted text-lg mb-4">No classrooms connected yet.</p>
+                <button onClick={handleConnect} disabled={importing} className="bg-lavender text-navy px-6 py-2 rounded-md font-semibold hover:bg-opacity-80 transition">
+                  {importing ? "Connecting..." : "Connect Google Classroom"}
+                </button>
+              </div>
+            )}
+            {hasClassrooms && (
+              <div className="mt-8">
+                <button onClick={() => { setActiveTab(''); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className="bg-navy text-white px-6 py-3 rounded-lg font-bold hover:bg-opacity-90 shadow-md">
+                  Create Assessment
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const renderTeacherClassroomList = () => {
+         if (classrooms.length === 0) {
+           return (
+             <div className="animate-fade-in text-center py-16">
+               <h2 className="text-2xl font-serif-custom font-bold text-navy mb-4">Classrooms</h2>
+               <p className="text-muted text-lg mb-6">No classrooms connected yet.</p>
+               <button onClick={handleConnect} disabled={importing} className="bg-navy text-white px-6 py-3 rounded-md font-semibold hover:bg-opacity-90 transition">
+                 {importing ? "Connecting..." : "Connect Google Classroom"}
+               </button>
+             </div>
+           );
+         }
+         
+         return (
+           <div className="animate-fade-in">
+             <h2 className="text-3xl font-serif-custom font-bold text-navy mb-8">Classrooms</h2>
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+               {classrooms.map(c => (
+                 <div key={c.id} className="bg-white p-6 rounded-xl shadow-sm border border-borderlight flex flex-col justify-between">
+                   <div>
+                     <h3 className="text-xl font-bold text-navy mb-1">{c.name}</h3>
+                     <p className="text-sm text-muted mb-4">{c.student_count} Students &bull; {c.assessment_count} Assessments</p>
+                   </div>
+                   <button onClick={() => setActiveClassroom(c)} className="w-full bg-lavender text-navy py-2 rounded-lg font-semibold hover:bg-opacity-80 transition mt-4 border border-indigo-100 shadow-sm">
+                     Open Classroom
+                   </button>
+                 </div>
+               ))}
+             </div>
+           </div>
+         );
+      };
+
+      const renderTeacherAssessmentsList = () => {
+        if (teacherAssessments.length === 0) {
+          return (
+            <div className="animate-fade-in text-center py-20">
+              <div className="bg-white rounded-2xl shadow-sm border border-borderlight p-12 max-w-lg mx-auto">
+                <h3 className="text-xl font-bold text-navy mb-3">No assessments yet</h3>
+                <p className="text-muted mb-6">Create and publish an assessment to get started.</p>
+                <button onClick={() => setActiveTab('create-assessment')} className="bg-navy text-white px-8 py-3 rounded-xl font-bold hover:bg-opacity-90 transition shadow-md">
+                  Create Assessment
+                </button>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="animate-fade-in">
+            <div className="flex items-center justify-between mb-8">
+              <h2 className="text-3xl font-serif-custom font-bold text-navy">Assessments</h2>
+              <button onClick={() => setActiveTab('create-assessment')} className="bg-navy text-white px-6 py-2 rounded-lg font-bold hover:bg-opacity-90 shadow-md text-sm">
+                + New Assessment
+              </button>
+            </div>
+            <div className="space-y-4">
+              {teacherAssessments.map(a => (
+                <div key={a.id} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded ${a.status === 'published' ? 'bg-successbg text-white' : 'bg-gray-200 text-gray-600'}`}>
+                        {a.status === 'published' ? 'Published' : 'Draft'}
+                      </span>
+                      {a.classroom_id && <span className="text-xs font-bold uppercase tracking-wider px-2 py-1 rounded bg-indigo-50 text-lavender">Assigned</span>}
+                    </div>
+                    <h3 className="text-xl font-bold text-navy mb-1">{a.title}</h3>
+                    <p className="text-sm text-muted mb-1">{a.topic} • {a.question_count || 0} Questions</p>
+                    {a.status === 'published' && a.total_students > 0 && (
+                      <p className="text-sm font-semibold text-lavender mt-1">
+                        Attempted by {a.attempted_students || 0} / {a.total_students} students
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right text-sm text-muted">
+                    <p>{a.status === 'published' ? '✅ Live' : '📝 Draft'}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      };
+
+      const ClassroomDetailView = ({ classroom, teacherAssessments, session, onBack }) => {
+        const [roomTab, setRoomTab] = React.useState('students');
+        const [classroomStudents, setClassroomStudents] = React.useState([]);
         const [loadingStudents, setLoadingStudents] = React.useState(true);
 
         React.useEffect(() => {
@@ -912,8 +1678,55 @@
             )}
 
             {roomTab === 'insights' && (
-              <div className="bg-white p-8 rounded-xl border border-borderlight shadow-sm text-center text-muted">
-                Insights will appear after students complete assessments.
+              <div className="space-y-8">
+                {!classroomInsights ? (
+                  <div className="bg-white p-8 rounded-xl border border-borderlight shadow-sm text-center text-muted">Loading insights...</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                        <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-2">Students Assessed</h3>
+                        <p className="text-3xl font-bold text-navy">{classroomInsights.overview.students_assessed || 0}</p>
+                      </div>
+                      <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                        <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-2">Assessments Completed</h3>
+                        <p className="text-3xl font-bold text-navy">{classroomInsights.overview.completed || 0}</p>
+                      </div>
+                      <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                        <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-2">Average Score</h3>
+                        <p className="text-3xl font-bold text-lavender">{classroomInsights.overview.average_score !== null ? `${classroomInsights.overview.average_score}%` : 'N/A'}</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                        <h3 className="font-semibold text-navy mb-4">Top Misconceptions</h3>
+                        {classroomInsights.common_gaps.length === 0 ? <p className="text-muted text-sm">No data yet.</p> : (
+                          <ul className="space-y-3">
+                            {classroomInsights.common_gaps.map((m, i) => (
+                              <li key={i} className="p-3 bg-gray-50 rounded-lg text-sm border border-gray-100 flex justify-between items-center">
+                                <span>{m.learning_gap}</span>
+                                <span className="font-bold text-navy bg-lavender px-2 py-1 rounded-full text-xs">{m.count} students</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                      <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                        <h3 className="font-semibold text-navy mb-4">Prerequisite Root Causes</h3>
+                        {classroomInsights.rootCauses.length === 0 ? <p className="text-muted text-sm">No data yet.</p> : (
+                          <ul className="space-y-3">
+                            {classroomInsights.rootCauses.map((rc, i) => (
+                              <li key={i} className="p-3 bg-red-50 rounded-lg text-sm border border-red-100 flex flex-col">
+                                <span className="font-semibold text-dangerbg mb-1">{rc.root_cause}</span>
+                                <span className="text-gray-600 text-xs">{rc.recommended_action}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>

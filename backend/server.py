@@ -518,37 +518,41 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                 user_res = supabase.auth.get_user(token)
                 auth_uid = user_res.user.id
 
+                query = parse_qs(parsed.query)
+                classroom_id = query.get("classroom_id", [None])[0]
+
                 t_res = supabase_admin.table("teachers").select("id").eq("auth_user_id", auth_uid).execute()
                 if not t_res.data:
                     return self._send_json({"error": "Forbidden"}, 403)
                 teacher_id = t_res.data[0]["id"]
 
-                # Fetch all assessments created by this teacher
                 a_res = supabase_admin.table("assessments").select("id").eq("creator_id", auth_uid).execute()
                 assessment_ids = [a["id"] for a in (a_res.data or [])]
 
-                # Students in this teacher's classrooms
                 db = self._load_classrooms()
                 student_ids = []
-                for cdata in db.values():
+                if classroom_id:
+                    cdata = db.get(classroom_id, {})
                     if cdata.get("teacher_id") == teacher_id:
-                        student_ids.extend(cdata.get("students", []))
-                student_ids = list(set(student_ids))
+                        student_ids = cdata.get("students", [])
+                else:
+                    for cdata in db.values():
+                        if cdata.get("teacher_id") == teacher_id:
+                            student_ids.extend(cdata.get("students", []))
+                    student_ids = list(set(student_ids))
 
-                # Build name map
                 student_map = {}
                 if student_ids:
                     st_res = supabase_admin.table("students").select("id, name").in_("id", student_ids).execute()
                     student_map = {s["id"]: s["name"] for s in (st_res.data or [])}
 
-                # Get attempts on teacher's assessments
                 attempts_res = supabase_admin.table("attempts").select("student_id, score, status").in_("assessment_id", assessment_ids).execute() if assessment_ids else None
                 attempts_data = attempts_res.data if attempts_res else []
+                if classroom_id:
+                    attempts_data = [a for a in attempts_data if a["student_id"] in student_ids]
 
-                # Count unique students who attempted
                 total_assessed = len(set(a["student_id"] for a in attempts_data))
                 
-                # Count completed attempts
                 scored = [a for a in attempts_data if a.get("status") == "evaluated" and a.get("score") is not None]
                 completed_count = len(scored)
                 
@@ -589,9 +593,6 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)
 
-        # ------------------------------------------------------------------
-        # STUDENT: Assigned assessments
-        # ------------------------------------------------------------------
         if path == "/api/student/assessments":
             token = self._get_bearer_token()
             if not token:
