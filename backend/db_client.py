@@ -178,19 +178,33 @@ def save_assessment(token: str, title: str, topic: str, description: str, questi
         teacher = supabase_admin.table("teachers").select("id").eq("auth_user_id", auth_uid).execute()
         if teacher.data:
             teacher_id = teacher.data[0]["id"]
-            st_res = supabase_admin.table("students").select("id").execute()
-            assignments = []
-            for s in st_res.data:
-                assignments.append({
-                    "assessment_id": assessment_id,
-                    "student_id": s["id"],
-                    "assigned_by": teacher_id,
-                    "status": "assigned"
-                })
-            if assignments:
+            
+            # Load only students in this specific classroom from persistence layer
+            classrooms_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "classrooms.json")
+            classroom_student_ids = []
+            if os.path.exists(classrooms_path):
+                import json as _json
+                with open(classrooms_path, "r") as f:
+                    db = _json.load(f)
+                classroom_data = db.get(str(classroom_id), {})
+                if classroom_data.get("teacher_id") == teacher_id:
+                    classroom_student_ids = classroom_data.get("students", [])
+            
+            if classroom_student_ids:
+                assignments = [
+                    {
+                        "assessment_id": assessment_id,
+                        "student_id": sid,
+                        "assigned_by": teacher_id,
+                        "status": "assigned"
+                    }
+                    for sid in classroom_student_ids
+                ]
                 supabase_admin.table("assignments").insert(assignments).execute()
+                print(f"[DB] Assigned to {len(assignments)} students in classroom {classroom_id}")
 
     return assessment
+
 
 def start_attempt(token: str, assessment_id: str):
     """Start a new assessment attempt for a student."""
@@ -230,7 +244,9 @@ def start_attempt(token: str, assessment_id: str):
     }
 
 def submit_attempt(token: str, attempt_id: str, student_answers: dict):
-    """Evaluate and submit a student attempt."""
+    """Evaluate and submit a student attempt. Writes learning gaps synchronously."""
+    import threading
+
     user_res = supabase.auth.get_user(token)
     auth_uid = user_res.user.id
     
@@ -247,14 +263,26 @@ def submit_attempt(token: str, attempt_id: str, student_answers: dict):
         
     assessment_id = attempt.data[0]["assessment_id"]
     
-    # Fetch question keys (secure backend logic)
-    keys_res = supabase_admin.table("question_keys").select("question_id, correct_answer, misconception_target").in_("question_id", list(student_answers.keys())).execute()
+    # Fetch question keys (server-side correctness only)
+    keys_res = supabase_admin.table("question_keys").select(
+        "question_id, correct_answer, misconception_target"
+    ).in_("question_id", list(student_answers.keys())).execute()
+    keys_map = {k["question_id"]: k for k in keys_res.data}
     
-    keys_map = { k["question_id"]: k for k in keys_res.data }
+    # Fetch question details
+    q_res = supabase_admin.table("questions").select(
+        "id, question_text, topic, difficulty"
+    ).in_("id", list(student_answers.keys())).execute()
+    q_map = {q["id"]: q for q in q_res.data}
     
+    # Fetch assessment topic as fallback
+    a_res = supabase_admin.table("assessments").select("topic").eq("id", assessment_id).execute()
+    assessment_topic = a_res.data[0]["topic"] if a_res.data else "General"
+
     answers_to_insert = []
     correct_count = 0
     total = attempt.data[0]["total_questions"]
+    incorrect_details = []
     
     for q_id, selected in student_answers.items():
         is_correct = False
@@ -269,12 +297,24 @@ def submit_attempt(token: str, attempt_id: str, student_answers: dict):
             "selected_answer": selected,
             "is_correct": is_correct
         })
+
+        if not is_correct and key:
+            q = q_map.get(q_id, {})
+            incorrect_details.append({
+                "student_id": student_id,
+                "question_id": q_id,
+                "question_text": q.get("question_text", ""),
+                "topic": q.get("topic") or assessment_topic,
+                "student_answer": selected,
+                "correct_answer": key["correct_answer"],
+                "misconception_target": key.get("misconception_target", ""),
+            })
     
     # Insert evaluated answers
     if answers_to_insert:
         supabase_admin.table("answers").insert(answers_to_insert).execute()
         
-    # Update attempt
+    # Update attempt score
     score = (correct_count / total * 100) if total > 0 else 0
     supabase_admin.table("attempts").update({
         "status": "evaluated",
@@ -282,31 +322,84 @@ def submit_attempt(token: str, attempt_id: str, student_answers: dict):
         "submitted_at": "now()"
     }).eq("id", attempt_id).execute()
     
-    # Mark assignments as completed
+    # Mark assignment complete
     supabase_admin.table("assignments").update({
         "status": "completed"
     }).eq("student_id", student_id).eq("assessment_id", assessment_id).execute()
-    
-    # Fetch full question details for diagnostic
-    q_res = supabase_admin.table("questions").select("id, question_text, topic").in_("id", list(student_answers.keys())).execute()
-    q_map = {q["id"]: q for q in q_res.data}
-    
-    incorrect_details = []
-    for ans in answers_to_insert:
-        if not ans["is_correct"]:
-            q_id = ans["question_id"]
-            incorrect_details.append({
+
+    # -----------------------------------------------------------------------
+    # SYNCHRONOUSLY write a "pending" learning gap for every wrong answer.
+    # This guarantees the gap appears in My Learning immediately, even before
+    # the LLM diagnosis runs.
+    # -----------------------------------------------------------------------
+    for item in incorrect_details:
+        topic = item["topic"]
+        hint = item.get("misconception_target", "") or "needs analysis"
+
+        # Check existing state for this student+topic
+        existing = supabase_admin.table("student_state") \
+            .select("id, attempts, status") \
+            .eq("student_id", student_id) \
+            .eq("topic", topic) \
+            .execute()
+
+        if existing.data:
+            rec = existing.data[0]
+            # Never overwrite a mastered/verified state just because of one wrong answer
+            if rec.get("status") not in ("mastered", "verified"):
+                supabase_admin.table("student_state").update({
+                    "status": "unresolved",
+                    "misconception": rec.get("misconception") or f"Needs diagnosis ({hint})",
+                    "attempts": (rec.get("attempts") or 0) + 1,
+                }).eq("id", rec["id"]).execute()
+        else:
+            supabase_admin.table("student_state").insert({
                 "student_id": student_id,
-                "question_id": q_id,
-                "question_text": q_map[q_id]["question_text"],
-                "topic": q_map[q_id]["topic"],
-                "student_answer": ans["selected_answer"],
-                "correct_answer": keys_map[q_id]["correct_answer"]
-            })
-            
+                "topic": topic,
+                "misconception": f"Pending diagnosis ({hint})" if hint else "Pending diagnosis",
+                "status": "unresolved",
+                "attempts": 1,
+                "previous_approaches": [],
+                "verification_result": "pending",
+                "flagged_false_mastery": False,
+            }).execute()
+
+    print(f"[SUBMIT] student={student_id} score={score:.1f}% wrong={len(incorrect_details)}/{total}")
+
+    # -----------------------------------------------------------------------
+    # Fire LLM diagnostic in background to refine the misconception label.
+    # If it fails the gap already exists in the DB — nothing is lost.
+    # -----------------------------------------------------------------------
+    if incorrect_details:
+        def run_bg_diagnostics(items, sid):
+            try:
+                import sys, os
+                _here = os.path.dirname(os.path.abspath(__file__))
+                _agent_dir = os.path.join(_here, "person-a-diagnostic-agent")
+                if _agent_dir not in sys.path:
+                    sys.path.insert(0, _agent_dir)
+                from diagnostic_agent import run_diagnostic
+                for item in items:
+                    try:
+                        run_diagnostic(
+                            student_id=sid,
+                            question=item["question_text"],
+                            student_answer=item["student_answer"],
+                            correct_answer=item["correct_answer"],
+                            topic=item["topic"],
+                        )
+                    except Exception as e:
+                        print(f"[BG DIAGNOSTIC] item failed: {e}")
+            except Exception as e:
+                print(f"[BG DIAGNOSTIC ERROR] module import failed: {e}")
+
+        t = threading.Thread(target=run_bg_diagnostics, args=(incorrect_details, student_id), daemon=True)
+        t.start()
+
     return {
         "score": score,
         "correct_count": correct_count,
         "total": total,
         "incorrect_details": incorrect_details
     }
+

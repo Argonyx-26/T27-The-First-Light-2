@@ -25,9 +25,10 @@ if _PERSON_B not in sys.path:
 try:
     from llm_client import call_llm
     from db_client import upsert_student_state
+    _IMPORTS_OK = True
 except ImportError as e:
     logger.error(f"Failed to import required modules: {e}")
-    sys.exit(1)
+    _IMPORTS_OK = False
 
 
 def run_diagnostic(
@@ -40,6 +41,10 @@ def run_diagnostic(
     """
     Run the Learning Diagnosis to analyze a student's answer and save to Supabase.
     """
+    if not _IMPORTS_OK:
+        logger.error("run_diagnostic called but imports failed — skipping LLM diagnosis")
+        return {"student_id": student_id, "topic": topic, "status": "error", "error": "import_failure"}
+
     logger.info(f"Starting diagnostic for student_id={student_id}, topic={topic}")
     
     system_prompt = (
