@@ -509,7 +509,7 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
         # ------------------------------------------------------------------
         # TEACHER: Insights
         # ------------------------------------------------------------------
-                if path == "/api/teacher/insights":
+        if path == "/api/teacher/insights":
             token = self._get_bearer_token()
             if not token:
                 return self._send_json({"error": "Unauthorized"}, 401)
