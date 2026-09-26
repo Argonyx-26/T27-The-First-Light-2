@@ -415,11 +415,72 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                 from db_client import supabase, supabase_admin
                 user_res = supabase.auth.get_user(token)
                 auth_uid = user_res.user.id
-                a_res = supabase_admin.table("assessments").select("*").eq("creator_id", auth_uid).execute()
-                return self._send_json(a_res.data or [])
+                a_res = supabase_admin.table("assessments").select("*").eq("creator_id", auth_uid).order("created_at", desc=True).execute()
+                assessments = a_res.data or []
+                # Enrich with question count
+                for a in assessments:
+                    try:
+                        q_res = supabase_admin.table("questions").select("id", count="exact").eq("assessment_id", a["id"]).execute()
+                        a["question_count"] = q_res.count or 0
+                    except Exception:
+                        a["question_count"] = 0
+                return self._send_json(assessments)
             except Exception as e:
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)
+
+        # ------------------------------------------------------------------
+        # TEACHER: Get students in a specific classroom
+        # ------------------------------------------------------------------
+        if path == "/api/classroom/students":
+            token = self._get_bearer_token()
+            if not token:
+                return self._send_json({"error": "Unauthorized"}, 401)
+            query = parse_qs(parsed.query)
+            classroom_id = query.get("classroom_id", [None])[0]
+            if not classroom_id:
+                return self._send_json({"error": "classroom_id required"}, 400)
+            try:
+                from db_client import supabase, supabase_admin, get_teacher_by_auth_id
+                user_res = supabase.auth.get_user(token)
+                auth_uid = user_res.user.id
+                teacher = get_teacher_by_auth_id(auth_uid)
+                if not teacher:
+                    return self._send_json({"error": "Forbidden"}, 403)
+
+                # Load from classroom persistence layer
+                db = self._load_classrooms()
+                classroom = db.get(classroom_id)
+                if not classroom or classroom.get("teacher_id") != teacher["id"]:
+                    return self._send_json({"error": "Forbidden: not your classroom"}, 403)
+
+                student_ids = classroom.get("students", [])
+                if not student_ids:
+                    return self._send_json([])
+
+                # Fetch student details from Supabase
+                st_res = supabase_admin.table("students").select("id, name, email").in_("id", student_ids).execute()
+                students_data = st_res.data or []
+
+                # Enrich with their latest learning state
+                result = []
+                for s in students_data:
+                    state_res = supabase_admin.table("student_state").select("status, misconception, topic").eq("student_id", s["id"]).order("updated_at", desc=True).limit(1).execute()
+                    state = state_res.data[0] if state_res.data else {}
+                    result.append({
+                        "id": s["id"],
+                        "name": s.get("name", "Unknown"),
+                        "email": s.get("email", ""),
+                        "state_status": state.get("status"),
+                        "misconception": state.get("misconception"),
+                        "topic": state.get("topic"),
+                    })
+                return self._send_json(result)
+            except Exception as e:
+                traceback.print_exc()
+                return self._send_json({"error": str(e)}, 500)
+
+
 
         # ------------------------------------------------------------------
         # TEACHER: Insights
@@ -828,34 +889,13 @@ IMPORTANT:
             try:
                 from db_client import submit_attempt
                 result = submit_attempt(token, attempt_id, answers)
-
-                # Fire background diagnostics for incorrect answers
-                incorrect = result.get("incorrect_details", [])
-                if incorrect:
-                    def run_bg_diagnostics(incorrect_list):
-                        try:
-                            if PERSON_A_DIR not in sys.path:
-                                sys.path.insert(0, PERSON_A_DIR)
-                            from diagnostic_agent import run_diagnostic
-                            for item in incorrect_list:
-                                run_diagnostic(
-                                    student_id=item["student_id"],
-                                    question=item["question_text"],
-                                    student_answer=item["student_answer"],
-                                    correct_answer=item["correct_answer"],
-                                    topic=item["topic"],
-                                )
-                        except Exception as e:
-                            print(f"[BG DIAGNOSTIC ERROR] {e}")
-
-                    t = threading.Thread(target=run_bg_diagnostics, args=(incorrect,))
-                    t.daemon = True
-                    t.start()
-
+                # Learning gap persistence and background LLM diagnosis are handled
+                # inside submit_attempt in db_client.py
                 return self._send_json({"success": True, "result": result})
             except Exception as e:
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)
+
 
         # ------------------------------------------------------------------
         # PRACTICE: Generate targeted explanation + question
@@ -879,10 +919,10 @@ IMPORTANT:
                 misconception = state.get("misconception", "")
                 topic = state.get("topic", "")
 
-                sys_prompt = """You are a personalized learning tutor. A student has a specific misconception.
+                sys_prompt = """You are a personalized learning tutor. A student has a specific learning gap.
 Your job:
-1. Provide a targeted, concise explanation (2-3 sentences) that directly addresses the misconception.
-2. Provide one targeted practice question (multiple choice, 4 options A-D).
+1. Provide a targeted, concise explanation (2-3 sentences) that directly addresses the misconception. Avoid long textbook-style explanations.
+2. Provide ONE targeted practice question (multiple choice, 4 options A-D) that tests the underlying concept, not just generic topics.
 
 Return ONLY JSON:
 {
@@ -891,7 +931,7 @@ Return ONLY JSON:
   "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
   "correct_answer": "A) ..."
 }"""
-                user_prompt = f"Topic: {topic}\nStudent misconception: {misconception}\n\nGenerate a targeted explanation and practice question."
+                user_prompt = f"Topic: {topic}\nStudent learning gap: {misconception}\n\nGenerate a tailored explanation and targeted practice question."
 
                 raw = call_llm(sys_prompt, user_prompt, primary="gemini")
                 if isinstance(raw, str):
@@ -899,6 +939,31 @@ Return ONLY JSON:
                     practice = json.loads(raw)
                 else:
                     practice = raw
+
+                # Optional YouTube integration
+                video_data = None
+                youtube_key = os.environ.get("YOUTUBE_API_KEY", "")
+                if youtube_key:
+                    import urllib.request, urllib.parse
+                    try:
+                        # Search based on ACTUAL learning gap
+                        query = urllib.parse.quote(f"{topic} {misconception}")
+                        url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={query}&type=video&key={youtube_key}&maxResults=1"
+                        req = urllib.request.Request(url)
+                        with urllib.request.urlopen(req, timeout=3) as response:
+                            yt_res = json.loads(response.read().decode())
+                            if yt_res.get("items"):
+                                item = yt_res["items"][0]
+                                video_data = {
+                                    "id": item["id"]["videoId"],
+                                    "title": item["snippet"]["title"],
+                                    "channel": item["snippet"]["channelTitle"]
+                                }
+                    except Exception as e:
+                        print(f"[YOUTUBE ERROR] {e}")
+
+                if video_data:
+                    practice["video"] = video_data
 
                 return self._send_json({"success": True, "practice": practice})
             except Exception as e:
@@ -914,38 +979,91 @@ Return ONLY JSON:
                 return self._send_json({"error": "Unauthorized"}, 401)
             payload = self._read_json_body()
             state_id = payload.get("state_id")
-            is_correct = payload.get("is_correct", False)
+            selected_answer = payload.get("selected_answer", "")
+            question_text = payload.get("question_text", "")
             try:
-                from db_client import supabase_admin
+                from db_client import supabase, supabase_admin
+                user_res = supabase.auth.get_user(token)
+                auth_uid = user_res.user.id
+                student_res = supabase_admin.table("students").select("id").eq("auth_user_id", auth_uid).execute()
+                if not student_res.data:
+                    return self._send_json({"error": "Student not found"}, 403)
+                student_id = student_res.data[0]["id"]
+
                 state_res = supabase_admin.table("student_state").select("*").eq("id", state_id).execute()
                 if not state_res.data:
                     return self._send_json({"error": "State not found"}, 404)
                 state = state_res.data[0]
 
+                if state.get("student_id") != student_id:
+                    return self._send_json({"error": "Forbidden"}, 403)
+
+                misconception = state.get("misconception", "")
+                topic = state.get("topic", "")
+
+                # Regenerate server-side to check correct_answer
+                sys_prompt = """You are a personalized learning tutor.
+Generate ONE targeted practice question (multiple choice, 4 options).
+Return ONLY JSON:
+{
+  "question_text": "...",
+  "options": ["...", "...", "...", "..."],
+  "correct_answer": "..."
+}"""
+                user_prompt = f"Topic: {topic}\nLearning gap: {misconception}\nQuestion text: {question_text}\nGenerate the JSON for this exact question to provide the correct answer."
+
+                raw = call_llm(sys_prompt, user_prompt, primary="gemini")
+                if isinstance(raw, str):
+                    raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                    practice_check = json.loads(raw)
+                else:
+                    practice_check = raw
+
+                correct_answer = practice_check.get("correct_answer", "")
+                is_correct = selected_answer.strip() == correct_answer.strip()
+
+                status = state.get("status")
+                attempts = state.get("attempts", 0)
+
                 if is_correct:
-                    attempts = state.get("attempts", 0)
-                    if attempts >= 1:
+                    # Need multiple correct answers/steps to master. 
+                    # If already 'intervened', a second correct answer marks it mastered.
+                    if status == "intervened":
                         new_status = "mastered"
                         new_verification = "true_mastery"
+                        feedback = "✓ Concept checked. You've mastered this!"
                     else:
                         new_status = "intervened"
                         new_verification = "pending"
+                        feedback = "✓ Good — you're improving on this concept."
+                    
                     supabase_admin.table("student_state").update({
                         "status": new_status,
                         "verification_result": new_verification,
                         "attempts": attempts + 1,
                     }).eq("id", state_id).execute()
-                    return self._send_json({"success": True, "resolved": new_status == "mastered", "new_status": new_status})
                 else:
+                    new_status = "unresolved"
+                    new_verification = "needs_more_practice"
+                    feedback = "✗ Let's try another way. The correct answer is highlighted."
                     supabase_admin.table("student_state").update({
-                        "status": "diagnosed",
-                        "verification_result": "needs_more_practice",
-                        "attempts": state.get("attempts", 0) + 1,
+                        "status": new_status,
+                        "verification_result": new_verification,
+                        "attempts": attempts + 1,
                     }).eq("id", state_id).execute()
-                    return self._send_json({"success": True, "resolved": False, "new_status": "diagnosed"})
+
+                return self._send_json({
+                    "success": True,
+                    "is_correct": is_correct,
+                    "correct_answer": correct_answer,
+                    "feedback": feedback,
+                    "new_status": new_status,
+                })
             except Exception as e:
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)
+
+
 
         # ------------------------------------------------------------------
         # STUDENT: Self-directed test (Test My Knowledge)

@@ -92,20 +92,14 @@
     // -------------------------------------------------------------------------
     // Main App
     // -------------------------------------------------------------------------
-    const AssessmentCreator = ({ session, classrooms }) => {
+    const AssessmentCreator = ({ session, classrooms, onSaved }) => {
       // PREREQUISITE BLOCKER: Must have a connected classroom
       if (!classrooms || classrooms.length === 0) {
         return (
           <div className="max-w-3xl mx-auto py-16 animate-fade-in text-center">
              <div className="bg-white p-10 rounded-2xl shadow-sm border border-borderlight">
-                <div className="w-16 h-16 bg-lavender rounded-full flex items-center justify-center mx-auto mb-6">
-                   <svg className="w-8 h-8 text-navy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
-                </div>
-                <h2 className="text-2xl font-serif-custom font-bold text-navy mb-4">Google Classroom Required</h2>
-                <p className="text-muted text-lg mb-8 max-w-lg mx-auto">You must connect a Google Classroom before you can create and assign assessments. This ensures your students can seamlessly access their practice.</p>
-                <button onClick={() => window.location.href = `/api/classroom/auth?token=${session.access_token}`} className="bg-navy text-white px-8 py-3 rounded-xl font-bold hover:bg-opacity-90 transition shadow-md text-lg">
-                   Connect Google Classroom
-                </button>
+                <h2 className="text-2xl font-serif-custom font-bold text-navy mb-4">No Classroom Connected</h2>
+                <p className="text-muted text-lg mb-6">Your Google Classroom will load automatically. If it hasn't appeared yet, please sign out and sign back in to grant Classroom access.</p>
              </div>
           </div>
         );
@@ -122,6 +116,7 @@
       const [generating, setGenerating] = useState(false);
       const [regenIndex, setRegenIndex] = useState(-1);
       const [saving, setSaving] = useState(false);
+      const [saveSuccess, setSaveSuccess] = useState('');
 
       const handleGenerate = async () => {
         if (!topic) return alert("Please specify a Topic first.");
@@ -165,10 +160,8 @@
             const updated = [...questions];
             updated[index] = data.questions[0];
             setQuestions(updated);
-          } else {
-            alert('Error generating question');
           }
-        } catch (e) { alert('Failed to regenerate'); }
+        } catch (e) { }
         setRegenIndex(-1);
       };
 
@@ -182,7 +175,6 @@
         const updated = [...questions];
         const oldVal = updated[qIndex].options[optIndex];
         updated[qIndex].options[optIndex] = value;
-        // If they edit the text of the currently selected correct answer, keep them in sync
         if (updated[qIndex].correct_answer === oldVal && oldVal !== "") {
             updated[qIndex].correct_answer = value;
         }
@@ -201,6 +193,7 @@
 
       const handleSave = async (status, classroom_id = null) => {
         setSaving(status);
+        setSaveSuccess('');
         try {
           const res = await fetch('/api/assessments', {
             method: 'POST',
@@ -209,9 +202,10 @@
           });
           const data = await res.json();
           if (data.success) {
-            alert(`Assessment ${status} successfully!`);
+            setSaveSuccess(status === 'published' ? 'Assessment published and assigned to classroom!' : 'Draft saved.');
             if (status === 'published') {
-               setTitle(''); setTopic(''); setDescription(''); setQuestions([]);
+              setTitle(''); setTopic(''); setDescription(''); setQuestions([]);
+              if (onSaved) setTimeout(() => onSaved(), 1500);
             }
           } else {
             alert('Error saving assessment: ' + data.error);
@@ -219,6 +213,7 @@
         } catch (e) { alert('Failed to save assessment'); }
         setSaving(false);
       };
+
 
       return (
         <div className="max-w-4xl mx-auto py-8 animate-fade-in">
@@ -331,6 +326,11 @@
           )}
 
           <div className="pt-4 border-t border-borderlight">
+            {saveSuccess && (
+              <div className="mb-4 bg-green-50 border border-green-200 text-green-800 px-5 py-3 rounded-lg font-medium animate-fade-in">
+                ✓ {saveSuccess}
+              </div>
+            )}
             {saving === 'assigning' ? (
                <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100 flex flex-col gap-4 animate-fade-in">
                  <h4 className="font-bold text-navy text-lg">Assign to Classroom</h4>
@@ -399,6 +399,10 @@
       const [practiceAnswer, setPracticeAnswer] = useState('');
             const [practiceFeedback, setPracticeFeedback] = useState(null);
       const [practiceGenerating, setPracticeGenerating] = useState(false);
+      const [followUpGaps, setFollowUpGaps] = useState([]);
+      const [followUpIndex, setFollowUpIndex] = useState(0);
+      const [followUpMode, setFollowUpMode] = useState(false);
+
       
       const [testTopic, setTestTopic] = useState('');
       const [testDiff, setTestDiff] = useState('medium');
@@ -724,93 +728,158 @@
          );
       };
 
-      const renderTeacherClassroomDetail = () => {
-         const [roomTab, setRoomTab] = useState('overview');
-         
-         return (
-           <div className="animate-fade-in">
-             <div className="flex items-center gap-4 mb-6">
-               <button onClick={() => setActiveClassroom(null)} className="text-muted hover:text-navy font-semibold">&larr; Back</button>
-               <h2 className="text-3xl font-serif-custom font-bold text-navy">{activeClassroom.name}</h2>
-             </div>
-             
-             {/* Classroom Sub-navigation */}
-             <div className="flex gap-6 border-b border-borderlight mb-8">
-               <button onClick={() => setRoomTab('overview')} className={`pb-2 font-semibold ${roomTab === 'overview' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Overview</button>
-               <button onClick={() => setRoomTab('assessments')} className={`pb-2 font-semibold ${roomTab === 'assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Assessments</button>
-               <button onClick={() => setRoomTab('students')} className={`pb-2 font-semibold ${roomTab === 'students' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Students</button>
-               <button onClick={() => setRoomTab('insights')} className={`pb-2 font-semibold ${roomTab === 'insights' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Classroom Insights</button>
-             </div>
-             
-             {roomTab === 'overview' && (
-               <div className="space-y-6">
-                 <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
-                    <h3 className="text-lg font-semibold text-navy mb-2">Classroom Overview</h3>
-                    <p className="text-muted">Welcome to your classroom dashboard. Select a tab to dive deeper.</p>
-                 </div>
-               </div>
-             )}
-             
-             {roomTab === 'assessments' && (
-               <div className="space-y-4">
-                 {teacherAssessments.length === 0 ? (
-                   <div className="text-center py-12 text-muted bg-white rounded-xl shadow-sm border border-borderlight">No assessments published in this classroom yet.</div>
-                 ) : (
-                   teacherAssessments.map(a => (
-                     <div key={a.id} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm flex items-center justify-between group">
-                       <div>
-                         <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded mb-2 inline-block ${a.status === 'published' ? 'bg-successbg text-white' : 'bg-gray-200 text-gray-600'}`}>
-                           {a.status === 'published' ? 'Published' : 'Draft'}
-                         </span>
-                         {a.status === 'published' && <span className="text-xs font-bold uppercase tracking-wider px-2 py-1 rounded mb-2 inline-block bg-indigo-50 text-lavender ml-2">Assigned to {activeClassroom.name}</span>}
-                         <h3 className="text-xl font-bold text-navy mb-1">{a.title}</h3>
-                         <p className="text-sm text-muted">{a.topic} &bull; {a.question_count} Questions</p>
-                       </div>
-                       <button className="bg-lavender text-navy px-6 py-2 rounded-lg font-bold hover:bg-opacity-80 transition border border-indigo-100 shadow-sm">
-                         View Analytics
-                       </button>
-                     </div>
-                   ))
-                 )}
-               </div>
-             )}
-             
-             {roomTab === 'students' && (
-               <div className="bg-card rounded-xl p-6 shadow-soft border border-borderlight">
-                 <div className="overflow-x-auto">
-                   <table className="w-full text-left">
-                     <thead>
-                       <tr className="border-b border-borderlight text-sm text-muted">
-                         <th className="pb-3 font-semibold">Student</th>
-                         <th className="pb-3 font-semibold">Status</th>
-                         <th className="pb-3 font-semibold">Attempts</th>
-                         <th className="pb-3 font-semibold">Diagnosis</th>
-                       </tr>
-                     </thead>
-                     <tbody className="divide-y divide-borderlight">
-                       {students.map((s, i) => (
-                         <tr key={i} className="hover:bg-indigo-50/30 transition-colors">
-                           <td className="py-4">
-                             <div className="font-semibold text-navy">{s.name}</div>
-                             <div className="text-xs text-muted">{s.email}</div>
-                           </td>
-                           <td className="py-4">
-                             <Pill type={s.status === 'mastered' ? 'success' : s.status === 'struggling' ? 'danger' : 'lavender'}>{s.status}</Pill>
-                           </td>
-                           <td className="py-4 font-mono text-sm">{s.attempts || 0}</td>
-                           <td className="py-4 max-w-[200px] truncate text-sm" title={s.misconception}>{s.misconception || '-'}</td>
-                         </tr>
-                       ))}
-                     </tbody>
-                   </table>
-                 </div>
-               </div>
-             )}
-             
-             {roomTab === 'insights' && renderTeacherInsights()}
-           </div>
-         );
+      const renderTeacherAssessmentsList = () => {
+        if (teacherAssessments.length === 0) {
+          return (
+            <div className="animate-fade-in text-center py-20">
+              <div className="bg-white rounded-2xl shadow-sm border border-borderlight p-12 max-w-lg mx-auto">
+                <h3 className="text-xl font-bold text-navy mb-3">No assessments yet</h3>
+                <p className="text-muted mb-6">Create and publish an assessment to get started.</p>
+                <button onClick={() => setActiveTab('create-assessment')} className="bg-navy text-white px-8 py-3 rounded-xl font-bold hover:bg-opacity-90 transition shadow-md">
+                  Create Assessment
+                </button>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="animate-fade-in">
+            <div className="flex items-center justify-between mb-8">
+              <h2 className="text-3xl font-serif-custom font-bold text-navy">Assessments</h2>
+              <button onClick={() => setActiveTab('create-assessment')} className="bg-navy text-white px-6 py-2 rounded-lg font-bold hover:bg-opacity-90 shadow-md text-sm">
+                + New Assessment
+              </button>
+            </div>
+            <div className="space-y-4">
+              {teacherAssessments.map(a => (
+                <div key={a.id} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded ${a.status === 'published' ? 'bg-successbg text-white' : 'bg-gray-200 text-gray-600'}`}>
+                        {a.status === 'published' ? 'Published' : 'Draft'}
+                      </span>
+                      {a.classroom_id && <span className="text-xs font-bold uppercase tracking-wider px-2 py-1 rounded bg-indigo-50 text-lavender">Assigned</span>}
+                    </div>
+                    <h3 className="text-xl font-bold text-navy mb-1">{a.title}</h3>
+                    <p className="text-sm text-muted">{a.topic} • {a.question_count || 0} Questions</p>
+                  </div>
+                  <div className="text-right text-sm text-muted">
+                    <p>{a.status === 'published' ? '✓ Live' : '— Draft'}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
       };
+
+      const ClassroomDetailView = ({ classroom, teacherAssessments, session, onBack }) => {
+        const [roomTab, setRoomTab] = React.useState('students');
+        const [classroomStudents, setClassroomStudents] = React.useState([]);
+        const [loadingStudents, setLoadingStudents] = React.useState(true);
+
+        React.useEffect(() => {
+          if (!classroom || !session) return;
+          const fetchStudents = async () => {
+            setLoadingStudents(true);
+            try {
+              const res = await fetch(`/api/classroom/students?classroom_id=${classroom.id}`, {
+                headers: { Authorization: `Bearer ${session.access_token}` }
+              });
+              const data = await res.json();
+              setClassroomStudents(Array.isArray(data) ? data : []);
+            } catch (e) { console.error('Could not load students', e); }
+            setLoadingStudents(false);
+          };
+          fetchStudents();
+        }, [classroom?.id]);
+
+        const classroomAssessments = teacherAssessments.filter(a => a.classroom_id === classroom.id || a.status === 'published');
+
+        return (
+          <div className="animate-fade-in">
+            <div className="flex items-center gap-4 mb-6">
+              <button onClick={onBack} className="text-muted hover:text-navy font-semibold">&larr; Back</button>
+              <h2 className="text-3xl font-serif-custom font-bold text-navy">{classroom.name}</h2>
+              <span className="text-sm text-muted bg-white border border-borderlight px-3 py-1 rounded-full">{classroom.student_count} Students</span>
+            </div>
+
+            <div className="flex gap-6 border-b border-borderlight mb-8">
+              <button onClick={() => setRoomTab('students')} className={`pb-2 font-semibold ${roomTab === 'students' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Students</button>
+              <button onClick={() => setRoomTab('assessments')} className={`pb-2 font-semibold ${roomTab === 'assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Assessments</button>
+              <button onClick={() => setRoomTab('insights')} className={`pb-2 font-semibold ${roomTab === 'insights' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Insights</button>
+            </div>
+
+            {roomTab === 'students' && (
+              <div className="bg-white rounded-xl border border-borderlight shadow-sm overflow-hidden">
+                {loadingStudents ? (
+                  <div className="text-center py-12 text-muted">Loading students...</div>
+                ) : classroomStudents.length === 0 ? (
+                  <div className="text-center py-12 text-muted">No students in this classroom yet.</div>
+                ) : (
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-50 border-b border-borderlight">
+                      <tr className="text-sm text-muted">
+                        <th className="px-6 py-4 font-semibold">Student</th>
+                        <th className="px-6 py-4 font-semibold">Email</th>
+                        <th className="px-6 py-4 font-semibold">Status</th>
+                        <th className="px-6 py-4 font-semibold">Learning Gap</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-borderlight">
+                      {classroomStudents.map((s, i) => (
+                        <tr key={i} className="hover:bg-indigo-50/30 transition-colors">
+                          <td className="px-6 py-4 font-semibold text-navy">{s.name || 'Unknown'}</td>
+                          <td className="px-6 py-4 text-sm text-muted">{s.email || '-'}</td>
+                          <td className="px-6 py-4">
+                            <span className={`text-xs font-bold px-2 py-1 rounded uppercase ${s.state_status === 'mastered' ? 'bg-green-100 text-green-700' : s.state_status ? 'bg-indigo-50 text-lavender' : 'bg-gray-100 text-gray-500'}`}>
+                              {s.state_status || 'No activity'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-muted max-w-xs truncate" title={s.misconception}>{s.misconception || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            {roomTab === 'assessments' && (
+              <div className="space-y-4">
+                {classroomAssessments.length === 0 ? (
+                  <div className="text-center py-12 text-muted bg-white rounded-xl shadow-sm border border-borderlight">
+                    No assessments assigned to this classroom yet.
+                  </div>
+                ) : (
+                  classroomAssessments.map(a => (
+                    <div key={a.id} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm flex items-center justify-between">
+                      <div>
+                        <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded mb-2 inline-block ${a.status === 'published' ? 'bg-successbg text-white' : 'bg-gray-200 text-gray-600'}`}>
+                          {a.status === 'published' ? 'Live' : 'Draft'}
+                        </span>
+                        <h3 className="text-xl font-bold text-navy mb-1">{a.title}</h3>
+                        <p className="text-sm text-muted">{a.topic} • {a.question_count || 0} Questions</p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {roomTab === 'insights' && (
+              <div className="bg-white p-8 rounded-xl border border-borderlight shadow-sm text-center text-muted">
+                Insights will appear after students complete assessments.
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const renderTeacherClassroomDetail = () => {
+        return <ClassroomDetailView classroom={activeClassroom} teacherAssessments={teacherAssessments} session={session} onBack={() => setActiveClassroom(null)} />;
+      };
+
 
       const renderTeacherInsights = () => {
          return (
@@ -855,9 +924,9 @@
         switch(activeTab) {
           case 'home': return renderTeacherHome();
           case 'classrooms': return renderTeacherClassroomList();
-          case 'assessments': return <div className="text-center py-12 text-muted">No published assessments yet.</div>;
+          case 'assessments': return renderTeacherAssessmentsList();
           case 'insights': return renderTeacherInsights();
-          case 'create-assessment': return <AssessmentCreator session={session} classrooms={classrooms} />;
+          case 'create-assessment': return <AssessmentCreator session={session} classrooms={classrooms} onSaved={() => { setActiveTab('assessments'); loadData(); }} />;
           default: return renderTeacherHome();
         }
       };
@@ -1029,41 +1098,279 @@
           const data = await res.json();
           if (data.success) {
             setTakingResult(data.result);
-            // Refresh assigned list
+            // Refresh student assessment list
             const headers = { "Authorization": `Bearer ${session.access_token}` };
             fetch("/api/student/assessments", { headers }).then(r => r.json()).then(d => setStudentAssessments(d || []));
+            // Fetch learning gaps created from this submission
+            fetch("/api/student/learning", { headers }).then(r => r.json()).then(gaps => {
+              const unresolved = (gaps || []).filter(g => g.status !== 'mastered' && g.status !== 'verified');
+              setStudentLearning(gaps || []);
+              setFollowUpGaps(unresolved);
+              setFollowUpIndex(0);
+              setFollowUpMode(false);
+            });
           } else {
             alert("Error submitting: " + data.error);
           }
         } catch (e) { alert("Failed to submit"); }
       };
 
+
+      const FollowUpPractice = ({ gap, session, onDone }) => {
+        const [practiceQ, setPracticeQ] = React.useState(null);
+        const [generating, setGenerating] = React.useState(false);
+        const [selected, setSelected] = React.useState('');
+        const [feedback, setFeedback] = React.useState(null);
+        const [submitting, setSubmitting] = React.useState(false);
+        const [gapStatus, setGapStatus] = React.useState(gap.status);
+
+        const loadPractice = () => {
+          setGenerating(true);
+          setSelected('');
+          setFeedback(null);
+          setPracticeQ(null);
+          fetch('/api/practice/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ state_id: gap.id })
+          })
+          .then(r => r.json())
+          .then(data => {
+            if (data.success) setPracticeQ(data.practice);
+          })
+          .catch(() => {})
+          .finally(() => setGenerating(false));
+        };
+
+        React.useEffect(() => {
+          loadPractice();
+        }, [gap?.id]);
+
+        const handleSubmit = async () => {
+          if (!selected || !practiceQ) return;
+          setSubmitting(true);
+          try {
+            const res = await fetch('/api/practice/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+              body: JSON.stringify({ state_id: gap.id, selected_answer: selected, question_text: practiceQ.question_text })
+            });
+            const data = await res.json();
+            if (data.success) {
+              setFeedback({ isCorrect: data.is_correct, text: data.feedback, correctAnswer: data.correct_answer, newStatus: data.new_status });
+              setGapStatus(data.new_status);
+              
+              // Also update the parent's state so the gap shows as verified if they go back
+              setFollowUpGaps(prev => prev.map(g => g.id === gap.id ? { ...g, status: data.new_status } : g));
+            }
+          } catch (e) {}
+          setSubmitting(false);
+        };
+
+        if (!gap) return null;
+
+        return (
+          <div className="max-w-3xl mx-auto py-8 animate-fade-in">
+            <div className="mb-8">
+              <p className="text-sm font-bold text-muted uppercase tracking-wider mb-2">WHAT YOU'RE WORKING ON</p>
+              <h2 className="text-3xl font-bold text-navy capitalize mb-1">{gap.misconception || 'Pending analysis'}</h2>
+              <p className="text-lg text-muted">{gap.topic}</p>
+            </div>
+
+            {generating ? (
+              <div className="bg-white rounded-2xl p-12 text-center border border-borderlight shadow-sm">
+                <div className="w-10 h-10 border-4 border-lavender border-t-navy rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-muted">Analyzing concept and preparing targeted lesson...</p>
+              </div>
+            ) : practiceQ ? (
+              <>
+                <div className="mb-10">
+                  <h3 className="text-xl font-bold text-navy mb-4 border-b border-borderlight pb-2">LEARN</h3>
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 text-navy text-lg leading-relaxed shadow-sm">
+                    {practiceQ.explanation}
+                  </div>
+                </div>
+
+                <div className="mb-10">
+                  <h3 className="text-xl font-bold text-navy mb-4 border-b border-borderlight pb-2">TARGETED PRACTICE</h3>
+                  <div className="bg-white rounded-2xl p-8 border border-borderlight shadow-sm">
+                    <p className="text-lg font-semibold text-navy mb-6 leading-relaxed">{practiceQ.question_text || practiceQ.question}</p>
+
+                    <div className="space-y-3 mb-6">
+                      {(practiceQ.options || []).map((opt, i) => {
+                        let cls = 'border-gray-200 bg-white hover:border-indigo-200';
+                        if (selected === opt && !feedback) cls = 'border-lavender bg-indigo-50/50 shadow-sm';
+                        if (feedback) {
+                          if (opt === feedback.correctAnswer) cls = 'border-green-400 bg-green-50';
+                          else if (selected === opt && !feedback.isCorrect) cls = 'border-red-400 bg-red-50';
+                          else cls = 'border-gray-100 bg-gray-50 opacity-50';
+                        }
+                        return (
+                          <label key={i} className={`flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition ${cls}`}>
+                            <input
+                              type="radio" name="followup-opt" checked={selected === opt}
+                              onChange={() => !feedback && setSelected(opt)}
+                              disabled={!!feedback} className="w-5 h-5 text-navy"
+                            />
+                            <span className="text-navy font-medium">{opt}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    {feedback ? (
+                      feedback.newStatus === 'mastered' ? (
+                        <div className="flex items-center justify-between bg-green-50 p-6 rounded-xl border border-green-200 mt-6">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center font-bold">✓</div>
+                            <span className="text-lg font-bold text-green-800">Concept checked</span>
+                          </div>
+                          <button onClick={onDone} className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 transition">
+                            Continue Learning
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className={`p-4 rounded-xl font-semibold mb-6 ${feedback.isCorrect ? 'bg-green-100 text-green-800' : 'bg-red-50 text-red-700'}`}>
+                            {feedback.text}
+                          </div>
+                          <div className="flex gap-4">
+                            <button onClick={loadPractice} className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 transition shadow-md">
+                              {feedback.isCorrect ? "Next Practice Question" : "Try Another Question"}
+                            </button>
+                            <button onClick={onDone} className="bg-white text-navy px-6 py-3 rounded-lg font-bold border border-borderlight shadow-sm">
+                              Back to Gaps
+                            </button>
+                          </div>
+                        </>
+                      )
+                    ) : (
+                      <button onClick={handleSubmit} disabled={!selected || submitting}
+                        className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 disabled:opacity-50 transition shadow-md">
+                        {submitting ? 'Checking...' : 'Submit Answer'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {practiceQ.video && (
+                  <div className="mb-10">
+                    <h3 className="text-xl font-bold text-navy mb-4 border-b border-borderlight pb-2">LEARN MORE</h3>
+                    <div className="bg-white rounded-2xl overflow-hidden border border-borderlight shadow-sm">
+                      <div className="w-full bg-gray-900" style={{ aspectRatio: '16/9' }}>
+                        <iframe 
+                          src={`https://www.youtube.com/embed/${practiceQ.video.id}`} 
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                          allowFullScreen
+                          className="w-full h-full"
+                        ></iframe>
+                      </div>
+                      <div className="p-6 flex justify-between items-center bg-gray-50">
+                        <div>
+                          <h4 className="font-bold text-navy text-lg">{practiceQ.video.title}</h4>
+                          <p className="text-sm text-muted">{practiceQ.video.channel}</p>
+                        </div>
+                        <a href={`https://www.youtube.com/watch?v=${practiceQ.video.id}`} target="_blank" className="text-lavender font-bold flex items-center gap-1 hover:underline">
+                          Watch on YouTube ↗
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="bg-white rounded-2xl p-12 text-center border border-borderlight shadow-sm text-muted">
+                Could not generate a practice question. <button onClick={onDone} className="text-navy font-bold underline ml-2">Go Back</button>
+              </div>
+            )}
+          </div>
+        );
+      };
+
       const renderAssessmentTaking = () => {
         if (takingResult) {
+          if (followUpMode && typeof followUpMode === 'object') {
+            return (
+              <FollowUpPractice
+                gap={followUpMode}
+                session={session}
+                onDone={() => setFollowUpMode(false)}
+              />
+            );
+          }
+
+          const unresolvedGaps = followUpGaps.filter(g => g.status !== 'mastered' && g.status !== 'verified');
+          const hasGaps = unresolvedGaps.length > 0;
+
           return (
-            <div className="max-w-2xl mx-auto py-12 animate-fade-in text-center">
-              <div className="bg-white p-10 rounded-2xl shadow-sm border border-borderlight mb-8">
-                <div className="w-20 h-20 bg-successbg text-white rounded-full flex items-center justify-center text-4xl mx-auto mb-6">✓</div>
-                <h2 className="text-3xl font-serif-custom font-bold text-navy mb-2">Assessment Complete</h2>
-                <p className="text-xl font-semibold text-muted mb-8">Score: {Math.round(takingResult.score)}% ({takingResult.correct_count} / {takingResult.total})</p>
-                
-                <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100 text-left mb-8">
-                  <h3 className="text-lg font-bold text-navy mb-2">Learning Analysis</h3>
-                  <p className="text-navy">Your answers have been analyzed. Check the <b>My Learning</b> tab for personalized insights and practice.</p>
+            <div className="max-w-4xl mx-auto py-12 animate-fade-in">
+              <div className="text-center mb-12 border-b border-borderlight pb-8">
+                <h2 className="text-4xl font-serif-custom font-bold text-navy mb-8">Assessment Complete</h2>
+                <p className="text-sm font-bold text-muted uppercase tracking-wider mb-3">YOUR SCORE</p>
+                <div className="inline-block bg-white px-10 py-6 rounded-2xl shadow-sm border border-borderlight">
+                  <div className="text-6xl font-bold text-navy mb-2">{Math.round(takingResult.score)}%</div>
+                  <p className="text-xl font-medium text-muted">{takingResult.correct_count} / {takingResult.total} correct</p>
                 </div>
-                
-                <div className="flex justify-center gap-4">
-                  <button onClick={() => setTakingAssessment(null)} className="bg-white text-navy px-8 py-3 rounded-lg font-bold border border-borderlight hover:bg-gray-50 transition shadow-sm">
-                    Back to Classroom
-                  </button>
-                  <button onClick={() => { setTakingAssessment(null); setActiveTab('my-learning'); }} className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 transition shadow-md">
-                    Practice What I Need
-                  </button>
+              </div>
+
+              <div className="mb-12">
+                <h3 className="text-2xl font-bold text-navy mb-6">WHAT YOU NEED TO WORK ON</h3>
+                {!hasGaps ? (
+                  <div className="bg-green-50 border border-green-200 rounded-2xl p-8 text-center shadow-sm">
+                    <p className="text-xl text-green-800 font-semibold mb-2">No unresolved learning gaps were identified.</p>
+                    <p className="text-green-700 mb-6">Great job! You have demonstrated a strong understanding of these concepts.</p>
+                    <button onClick={() => { setTakingAssessment(null); setTakingResult(null); setActiveTab('my-learning'); }} className="bg-green-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-green-700 transition shadow-md">
+                      Continue Learning
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    {unresolvedGaps.map(gap => (
+                      <div key={gap.id} className="bg-white border border-borderlight rounded-2xl p-6 shadow-sm flex items-center justify-between hover:border-lavender transition">
+                        <div>
+                          <p className="text-sm text-muted mb-1">{gap.topic}</p>
+                          <h4 className="text-lg font-bold text-navy capitalize flex items-center gap-2">
+                             <span className="w-2 h-2 rounded-full bg-dangerbg"></span> {gap.misconception || 'Pending analysis'}
+                          </h4>
+                        </div>
+                        <button onClick={() => setFollowUpMode(gap)} className="bg-navy text-white px-6 py-2 rounded-lg font-bold hover:bg-opacity-90 transition shadow-sm whitespace-nowrap ml-4">
+                          Practice This
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {hasGaps && (
+                <div className="mb-12">
+                  <h3 className="text-2xl font-bold text-navy mb-6">RECOMMENDED PRACTICE</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {unresolvedGaps.map(gap => (
+                      <div key={`rec-${gap.id}`} className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                        <div className="mb-6">
+                          <span className="text-xs font-bold text-lavender uppercase tracking-wider mb-2 inline-block bg-white px-2 py-1 rounded shadow-sm">{gap.topic}</span>
+                          <h4 className="text-xl font-bold text-navy capitalize mb-2">{gap.misconception || 'Pending analysis'}</h4>
+                          <p className="text-gray-600 text-sm">Targeted practice and explanation designed to address this specific learning gap.</p>
+                        </div>
+                        <button onClick={() => setFollowUpMode(gap)} className="w-full bg-white text-navy border border-borderlight px-6 py-3 rounded-lg font-bold hover:border-lavender transition shadow-sm">
+                          Practice This
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+              )}
+
+              <div className="text-center pt-8 border-t border-borderlight">
+                <button onClick={() => { setTakingAssessment(null); setTakingResult(null); setActiveTab('overview'); }} className="text-muted hover:text-navy font-bold underline transition">
+                  Return to Dashboard
+                </button>
               </div>
             </div>
           );
         }
+
 
         if (!takingData) return <div className="text-center py-20 text-xl font-bold animate-pulse">Loading Assessment...</div>;
 
