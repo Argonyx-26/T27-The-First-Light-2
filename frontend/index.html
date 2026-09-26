@@ -1796,7 +1796,21 @@
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-borderlight mb-8">
                <span className="text-xs font-bold text-lavender uppercase tracking-wider bg-indigo-50 px-2 py-1 rounded mb-2 inline-block">{practiceGap.topic}</span>
                <h3 className="text-xl font-bold text-navy capitalize mb-4">{practiceGap.misconception}</h3>
-               <p className="text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">{practiceData.explanation}</p>
+               <div className="text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100 whitespace-pre-wrap">{practiceData.explanation}</div>
+               
+               {practiceData.video && (
+                 <div className="mt-6 border-t border-borderlight pt-6">
+                   <p className="text-sm font-bold text-navy mb-3">Recommended Review Video:</p>
+                   <iframe 
+                     className="w-full h-64 rounded-xl shadow-sm" 
+                     src={`https://www.youtube.com/embed/${practiceData.video.id}`} 
+                     title={practiceData.video.title}
+                     frameBorder="0" 
+                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                     allowFullScreen>
+                   </iframe>
+                 </div>
+               )}
             </div>
             
             <div className="bg-indigo-50 p-8 rounded-2xl shadow-sm border border-indigo-100 mb-8">

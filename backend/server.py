@@ -1180,13 +1180,15 @@ If CORRECT:
 Return JSON: {{"correct": true}}
 
 If INCORRECT:
-Identify the misconception and provide a remediation explanation. Include a simple ASCII flowchart or text-based visual map representing the concept to help them understand.
+Identify the specific misconception the student has.
+Provide a remediation explanation. Include a simple ASCII flowchart or text-based visual map representing the concept to help them understand.
 If step < 3, generate the NEXT follow-up question in the progression (e.g. if step=0 generate Near Transfer, if 1 generate Far, if 2 generate Novel).
 If step == 3 (they failed Novel Concept), set "persistent": true and do not generate a next question.
 
 Return JSON (if incorrect):
 {{
   "correct": false,
+  "misconception": "Short 1-sentence summary of what they misunderstood",
   "remediation": "Explanation of misconception with text visual/flowchart...",
   "persistent": true, // or false
   "next_question": {{ // Omit if persistent=true
@@ -1210,10 +1212,14 @@ Return ONLY valid JSON."""
                     st = supabase_admin.table("students").select("id").eq("auth_user_id", auth_uid).execute()
                     if st.data:
                         student_id = st.data[0]["id"]
+                        
+                        # Grab specific misconception or fallback
+                        misc_text = result.get("misconception", "Persistent struggle with concept")
+                        
                         supabase_admin.table("student_state").insert({
                             "student_id": student_id,
                             "topic": topic,
-                            "misconception": "Persistent struggle during Practice Mode",
+                            "misconception": misc_text,
                             "status": "unresolved",
                             "attempts": 1,
                             "verification_result": "needs_more_practice",
