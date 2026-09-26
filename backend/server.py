@@ -955,12 +955,12 @@ IMPORTANT:
 
                 sys_prompt = """You are a personalized learning tutor. A student has a specific learning gap.
 Your job:
-1. Provide a targeted, concise explanation (2-3 sentences) that directly addresses the misconception. Avoid long textbook-style explanations.
+1. Provide a targeted explanation that directly addresses the misconception. INCLUDE simple text-based diagrams, ASCII flowcharts, or visual layouts (using plain text/emojis) to help them visualize the concept.
 2. Provide ONE targeted practice question (multiple choice, 4 options A-D) that tests the underlying concept, not just generic topics.
 
 Return ONLY JSON:
 {
-  "explanation": "...",
+  "explanation": "Explanation with text-based visual or flowchart...",
   "question_text": "...",
   "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
   "correct_answer": "A) ..."
@@ -1100,24 +1100,81 @@ Return ONLY JSON:
 
 
         # ------------------------------------------------------------------
-        # STUDENT: Interactive Tutor Chat
+        # STUDENT: Practice Mode
         # ------------------------------------------------------------------
-        if path == "/api/tutor/chat":
+        if path == "/api/practice-mode/start":
             token = self._get_bearer_token()
-            if not token:
-                return self._send_json({"error": "Unauthorized"}, 401)
+            if not token: return self._send_json({"error": "Unauthorized"}, 401)
             payload = self._read_json_body()
             topic = payload.get("topic", "")
-            history = payload.get("history", [])
-            if not topic:
-                return self._send_json({"error": "Topic is required"}, 400)
+            num_questions = int(payload.get("num_questions", 3))
             
+            sys_prompt = """Generate a multiple-choice practice quiz. 
+Return ONLY a valid JSON array. Each item:
+{
+  "question_text": "...",
+  "options": ["...", "...", "...", "..."],
+  "correct_answer": "...",
+  "topic": "..."
+}"""
             try:
-                from tutor_agent import generate_tutor_response
-                response = generate_tutor_response(topic, history)
-                
-                # If persistent misconception is identified, save it to the DB
-                if response.get("persistent_misconception"):
+                raw = call_llm(sys_prompt, f"Topic: {topic}\nNumber: {num_questions}", primary="gemini")
+                if isinstance(raw, str):
+                    raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                    questions = json.loads(raw)
+                elif isinstance(raw, list):
+                    questions = raw
+                else: questions = []
+                return self._send_json({"success": True, "questions": questions})
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return self._send_json({"error": str(e)}, 500)
+
+        if path == "/api/practice-mode/verify":
+            token = self._get_bearer_token()
+            if not token: return self._send_json({"error": "Unauthorized"}, 401)
+            payload = self._read_json_body()
+            
+            question_text = payload.get("question_text", "")
+            selected_answer = payload.get("selected_answer", "")
+            step = int(payload.get("step", 0)) # 0=Base, 1=Near, 2=Far, 3=Novel
+            topic = payload.get("topic", "")
+            
+            sys_prompt = f"""You are a master teacher evaluating a student's answer.
+Question: {question_text}
+Student's Answer: {selected_answer}
+Step: {step} (0=Base, 1=Near Transfer, 2=Far Transfer, 3=Novel Concept)
+
+Evaluate correctness.
+If CORRECT:
+Return JSON: {{"correct": true}}
+
+If INCORRECT:
+Identify the misconception and provide a remediation explanation. Include a simple ASCII flowchart or text-based visual map representing the concept to help them understand.
+If step < 3, generate the NEXT follow-up question in the progression (e.g. if step=0 generate Near Transfer, if 1 generate Far, if 2 generate Novel).
+If step == 3 (they failed Novel Concept), set "persistent": true and do not generate a next question.
+
+Return JSON (if incorrect):
+{{
+  "correct": false,
+  "remediation": "Explanation of misconception with text visual/flowchart...",
+  "persistent": true, // or false
+  "next_question": {{ // Omit if persistent=true
+     "question_text": "...",
+     "options": ["...", "...", "...", "..."]
+  }}
+}}
+Return ONLY valid JSON."""
+            try:
+                raw = call_llm(sys_prompt, "Evaluate.", primary="gemini")
+                if isinstance(raw, str):
+                    raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                    result = json.loads(raw)
+                else:
+                    result = raw
+                    
+                if result.get("persistent"):
                     from db_client import supabase, supabase_admin
                     user_res = supabase.auth.get_user(token)
                     auth_uid = user_res.user.id
@@ -1127,14 +1184,14 @@ Return ONLY JSON:
                         supabase_admin.table("student_state").insert({
                             "student_id": student_id,
                             "topic": topic,
-                            "misconception": response["persistent_misconception"],
+                            "misconception": "Persistent struggle during Practice Mode",
                             "status": "unresolved",
                             "attempts": 1,
                             "verification_result": "needs_more_practice",
                             "flagged_false_mastery": False
                         }).execute()
-
-                return self._send_json(response)
+                        
+                return self._send_json(result)
             except Exception as e:
                 import traceback
                 traceback.print_exc()
