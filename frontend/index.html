@@ -424,6 +424,7 @@
 
       const [misconceptions, setMisconceptions] = useState([]);
       const [rootCauses, setRootCauses] = useState([]);
+      const [insightsOverview, setInsightsOverview] = useState(null);
       const [loading, setLoading] = useState(true);
             const [importing, setImporting] = useState(false);
       const [classroomConnectState, setClassroomConnectState] = useState(null); // { status: 'success'|'error', msg: '', detail: '' }
@@ -519,10 +520,23 @@
           
           const resAssessments = await fetch("/api/teacher/assessments", { headers });
           const dataAssessments = await resAssessments.json();
+
+          const resInsights = await fetch("/api/teacher/insights", { headers });
+          const dataInsights = await resInsights.json();
           
           setStudents(dataStudents || []);
           setClassrooms(Array.isArray(dataClassrooms) ? dataClassrooms : []);
           setTeacherAssessments(dataAssessments || []);
+          if (dataInsights && dataInsights.success) {
+             setInsightsOverview(dataInsights.overview);
+             setMisconceptions(dataInsights.common_gaps || []);
+             // The backend returns support_needed instead of rootCauses. We will map support_needed -> rootCauses for now, or just render support_needed.
+             const rc = (dataInsights.support_needed || []).map(s => ({
+               root_cause: `${s.student_name} struggles with ${s.topic}: ${s.learning_gap}`,
+               recommended_action: s.status === 'unresolved' ? 'Needs intervention' : 'In progress'
+             }));
+             setRootCauses(rc);
+          }
         } catch (e) {
           console.error("Failed to fetch", e);
         } finally {
@@ -786,10 +800,15 @@
                       {a.classroom_id && <span className="text-xs font-bold uppercase tracking-wider px-2 py-1 rounded bg-indigo-50 text-lavender">Assigned</span>}
                     </div>
                     <h3 className="text-xl font-bold text-navy mb-1">{a.title}</h3>
-                    <p className="text-sm text-muted">{a.topic} • {a.question_count || 0} Questions</p>
+                    <p className="text-sm text-muted mb-1">{a.topic} • {a.question_count || 0} Questions</p>
+                    {a.status === 'published' && a.total_students > 0 && (
+                      <p className="text-sm font-semibold text-lavender mt-1">
+                        Attempted by {a.attempted_students || 0} / {a.total_students} students
+                      </p>
+                    )}
                   </div>
                   <div className="text-right text-sm text-muted">
-                    <p>{a.status === 'published' ? '✓ Live' : '— Draft'}</p>
+                    <p>{a.status === 'published' ? '✅ Live' : '📝 Draft'}</p>
                   </div>
                 </div>
               ))}
@@ -909,6 +928,22 @@
       const renderTeacherInsights = () => {
          return (
            <div className="animate-fade-in space-y-8">
+             {insightsOverview && (
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                 <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                   <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-2">Total Students Assessed</h3>
+                   <p className="text-3xl font-bold text-navy">{insightsOverview.students_assessed || 0}</p>
+                 </div>
+                 <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                   <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-2">Assessments Completed</h3>
+                   <p className="text-3xl font-bold text-navy">{insightsOverview.completed || 0}</p>
+                 </div>
+                 <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                   <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-2">Average Score</h3>
+                   <p className="text-3xl font-bold text-lavender">{insightsOverview.average_score !== null ? `${insightsOverview.average_score}%` : 'N/A'}</p>
+                 </div>
+               </div>
+             )}
              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
                  <h3 className="font-semibold text-navy mb-4">Top Misconceptions</h3>

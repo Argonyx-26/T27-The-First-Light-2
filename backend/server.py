@@ -432,15 +432,24 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                 auth_uid = user_res.user.id
                 a_res = supabase_admin.table("assessments").select("*").eq("creator_id", auth_uid).order("created_at", desc=True).execute()
                 assessments = a_res.data or []
-                # Enrich with question count
+                # Enrich with question count and stats
                 for a in assessments:
                     try:
                         q_res = supabase_admin.table("questions").select("id", count="exact").eq("assessment_id", a["id"]).execute()
                         a["question_count"] = q_res.count or 0
+                        
+                        assign_res = supabase_admin.table("assignments").select("id", count="exact").eq("assessment_id", a["id"]).execute()
+                        a["total_students"] = assign_res.count or 0
+                        
+                        attempt_res = supabase_admin.table("attempts").select("id", count="exact").eq("assessment_id", a["id"]).eq("status", "evaluated").execute()
+                        a["attempted_students"] = attempt_res.count or 0
                     except Exception:
                         a["question_count"] = 0
+                        a["total_students"] = 0
+                        a["attempted_students"] = 0
                 return self._send_json(assessments)
             except Exception as e:
+                import traceback
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)
 
