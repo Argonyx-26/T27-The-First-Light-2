@@ -476,7 +476,8 @@
         await supabaseClient.auth.signInWithOAuth({ 
           provider: 'google',
           options: {
-            redirectTo: window.location.origin + '/index.html'
+            redirectTo: window.location.origin + '/index.html',
+            scopes: 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly https://www.googleapis.com/auth/classroom.profile.emails'
           }
         });
       };
@@ -490,12 +491,11 @@
       const loadData = async () => {
         try {
           const headers = { "Authorization": `Bearer ${session.access_token}` };
-          const [resInsights, resStudents, resClassrooms] = await Promise.all([
-            fetch("/api/classroom/insights"),
+          const pt = session.provider_token ? `?provider_token=${encodeURIComponent(session.provider_token)}` : '';
+          const [resStudents, resClassrooms] = await Promise.all([
             fetch("/api/students"),
-            fetch("/api/classrooms", { headers })
+            fetch(`/api/classrooms${pt}`, { headers })
           ]);
-          const dataInsights = await resInsights.json();
           const dataStudents = await resStudents.json();
           const dataClassrooms = await resClassrooms.json();
           
@@ -503,10 +503,8 @@
           const dataAssessments = await resAssessments.json();
           
           setStudents(dataStudents || []);
-          setClassrooms(dataClassrooms || []);
+          setClassrooms(Array.isArray(dataClassrooms) ? dataClassrooms : []);
           setTeacherAssessments(dataAssessments || []);
-          setMisconceptions(dataInsights.misconceptions || []);
-          setRootCauses(dataInsights.root_causes || []);
         } catch (e) {
           console.error("Failed to fetch", e);
         } finally {
@@ -517,13 +515,21 @@
       useEffect(() => {
         if (!session) return;
         
-        const loadUserSpecificData = async () => {
+        const providerToken = session.provider_token || '';
+
+        const loadTeacherClassrooms = async () => {
            const headers = { "Authorization": `Bearer ${session.access_token}` };
            try {
-             const resClassrooms = await fetch("/api/classrooms", { headers });
+             const ptParam = providerToken ? `?provider_token=${encodeURIComponent(providerToken)}` : '';
+             const resClassrooms = await fetch(`/api/classrooms${ptParam}`, { headers });
              const dataClassrooms = await resClassrooms.json();
-             setClassrooms(dataClassrooms || []);
-             
+             setClassrooms(Array.isArray(dataClassrooms) ? dataClassrooms : []);
+           } catch (e) { console.error("Error loading classrooms", e); }
+        };
+
+        const loadStudentData = async () => {
+           const headers = { "Authorization": `Bearer ${session.access_token}` };
+           try {
              const resAssessments = await fetch("/api/student/assessments", { headers });
              const dataAssessments = await resAssessments.json();
              setStudentAssessments(dataAssessments || []);
@@ -531,15 +537,14 @@
              const resLearning = await fetch("/api/student/learning", { headers });
              const dataLearning = await resLearning.json();
              setStudentLearning(dataLearning || []);
-           } catch (e) { console.error("Error loading classrooms", e); }
+           } catch (e) { console.error("Error loading student data", e); }
         };
 
         if (role === 'teacher') {
           loadData();
-          const interval = setInterval(loadData, 3000);
-          return () => clearInterval(interval);
+          loadTeacherClassrooms();
         } else if (role === 'student') {
-          loadUserSpecificData();
+          loadStudentData();
         }
       }, [session, role]);
 

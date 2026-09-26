@@ -313,28 +313,96 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
             token = self._get_bearer_token()
             if not token:
                 return self._send_json({"error": "Unauthorized"}, 401)
+
+            # Frontend passes provider_token as a query param for Classroom API
+            query = parse_qs(parsed.query)
+            provider_token = query.get("provider_token", [None])[0]
+
             try:
-                from db_client import supabase, get_teacher_by_auth_id
+                from db_client import supabase, get_teacher_by_auth_id, upsert_student
                 user_res = supabase.auth.get_user(token)
                 auth_uid = user_res.user.id
                 teacher = get_teacher_by_auth_id(auth_uid)
                 if not teacher:
                     return self._send_json([])
                 teacher_id = teacher["id"]
+
+                # If we have a provider_token, fetch live from Google Classroom API
+                if provider_token and GOOGLE_API_AVAILABLE:
+                    try:
+                        print("[CLASSROOM AUTO] Fetching classrooms using provider_token from Google login")
+                        from google.oauth2.credentials import Credentials
+                        creds = Credentials(token=provider_token)
+                        service = build("classroom", "v1", credentials=creds)
+                        results = service.courses().list(pageSize=20).execute()
+                        courses = results.get("courses", [])
+                        print(f"[CLASSROOM AUTO] Got {len(courses)} courses from Google")
+
+                        db_classrooms = self._load_classrooms()
+                        for course in courses:
+                            c_id = course["id"]
+                            c_name = course.get("name", "Untitled Course")
+                            # Fetch roster
+                            try:
+                                roster = service.courses().students().list(courseId=c_id).execute()
+                                google_students = roster.get("students", [])
+                            except Exception:
+                                google_students = []
+
+                            student_ids = []
+                            for s in google_students:
+                                profile = s.get("profile", {})
+                                name = profile.get("name", {}).get("fullName", "Unknown")
+                                email = profile.get("emailAddress", "").lower()
+                                if not email:
+                                    continue
+                                try:
+                                    db_id = upsert_student(email, name)
+                                    if db_id:
+                                        student_ids.append(db_id)
+                                except Exception:
+                                    pass
+
+                            db_classrooms[c_id] = {
+                                "name": c_name,
+                                "teacher_id": teacher_id,
+                                "students": student_ids,
+                            }
+                        self._save_classrooms(db_classrooms)
+
+                        rooms = [
+                            {
+                                "id": cid,
+                                "name": cdata["name"],
+                                "student_count": len(cdata.get("students", [])),
+                                "assessment_count": 0,
+                            }
+                            for cid, cdata in db_classrooms.items()
+                            if cdata.get("teacher_id") == teacher_id
+                        ]
+                        return self._send_json(rooms)
+
+                    except Exception as e:
+                        print(f"[CLASSROOM AUTO] Google API failed: {e} — falling back to cache")
+
+                # Fall back to cached classrooms
                 db = self._load_classrooms()
-                rooms = []
-                for cid, cdata in db.items():
-                    if cdata.get("teacher_id") == teacher_id:
-                        rooms.append({
-                            "id": cid,
-                            "name": cdata.get("name"),
-                            "student_count": len(cdata.get("students", [])),
-                            "assessment_count": 0,
-                        })
+                rooms = [
+                    {
+                        "id": cid,
+                        "name": cdata.get("name"),
+                        "student_count": len(cdata.get("students", [])),
+                        "assessment_count": 0,
+                    }
+                    for cid, cdata in db.items()
+                    if cdata.get("teacher_id") == teacher_id
+                ]
                 return self._send_json(rooms)
+
             except Exception as e:
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)
+
 
         # ------------------------------------------------------------------
         # TEACHER: List assessments they created
