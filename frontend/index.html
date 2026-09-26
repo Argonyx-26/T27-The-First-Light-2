@@ -951,8 +951,8 @@
                    <ul className="space-y-3">
                      {misconceptions.map((m, i) => (
                        <li key={i} className="p-3 bg-gray-50 rounded-lg text-sm border border-gray-100 flex justify-between items-center">
-                         <span>{m.learning_gap}</span>
-                         <span className="font-bold text-navy bg-lavender px-2 py-1 rounded-full text-xs">{m.percentage}% ({m.count} students)</span>
+                         <span>{m.misconception}</span>
+                         <span className="font-bold text-navy bg-lavender px-2 py-1 rounded-full text-xs">{m.count} students</span>
                        </li>
                      ))}
                    </ul>
@@ -1162,14 +1162,15 @@
             const headers = { "Authorization": `Bearer ${session.access_token}` };
             fetch("/api/student/assessments", { headers }).then(r => r.json()).then(d => setStudentAssessments(d || []));
             // Fetch learning gaps created from this submission
-            fetch("/api/student/learning", { headers }).then(r => r.json()).then(dataLearning => {
-              const states = dataLearning.states || dataLearning || [];
-              const unresolved = states.filter(g => g.status !== 'mastered' && g.status !== 'verified');
-              setStudentLearning(states);
+            fetch("/api/student/learning", { headers }).then(r => r.json()).then(data => {
+              const gaps = data.states || data || [];
+              const unresolved = gaps.filter(g => g.status !== 'mastered' && g.status !== 'verified');
+              setStudentLearning(gaps);
+              if (data.incorrect_answers) setStudentIncorrect(data.incorrect_answers);
               setFollowUpGaps(unresolved);
               setFollowUpIndex(0);
               setFollowUpMode(false);
-            }).catch(e => console.error("Error fetching gaps", e));
+            }).catch(e => console.error(e));
           } else {
             alert("Error submitting: " + data.error);
           }
@@ -1394,11 +1395,14 @@
                              <span className="w-2 h-2 rounded-full bg-dangerbg"></span> {gap.misconception || 'Pending analysis'}
                           </h4>
                         </div>
-                        <button onClick={() => setFollowUpMode(gap)} className="bg-navy text-white px-6 py-2 rounded-lg font-bold hover:bg-opacity-90 transition shadow-sm whitespace-nowrap ml-4">
-                          Practice This
-                        </button>
                       </div>
                     ))}
+                    <div className="mt-8 text-center p-6 bg-indigo-50 rounded-xl border border-indigo-100">
+                      <p className="text-navy font-semibold mb-4 text-lg">Please navigate to the My Learning tab to view your specific learning gaps, watch recommended videos, and clear your misconceptions!</p>
+                      <button onClick={() => { setTakingAssessment(null); setTakingResult(null); setActiveTab('my-learning'); }} className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 transition shadow-md">
+                        Go to My Learning
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1537,7 +1541,7 @@
             setPracticeFeedback({ isCorrect, text: data.feedback });
             // refresh learning state
             const headers = { "Authorization": `Bearer ${session.access_token}` };
-            fetch("/api/student/learning", { headers }).then(r => r.json()).then(d => setStudentLearning(d || []));
+            fetch("/api/student/learning", { headers }).then(r => r.json()).then(data => { setStudentLearning(data.states || data || []); if (data.incorrect_answers) setStudentIncorrect(data.incorrect_answers); });
           }
         } catch (e) { alert("Failed to verify practice"); }
       };
