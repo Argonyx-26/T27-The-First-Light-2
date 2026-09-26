@@ -509,7 +509,7 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
         # ------------------------------------------------------------------
         # TEACHER: Insights
         # ------------------------------------------------------------------
-        if path == "/api/teacher/insights":
+                if path == "/api/teacher/insights":
             token = self._get_bearer_token()
             if not token:
                 return self._send_json({"error": "Unauthorized"}, 401)
@@ -523,7 +523,11 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                     return self._send_json({"error": "Forbidden"}, 403)
                 teacher_id = t_res.data[0]["id"]
 
-                # Students in this teacher's classrooms from persistence
+                # Fetch all assessments created by this teacher
+                a_res = supabase_admin.table("assessments").select("id").eq("creator_id", auth_uid).execute()
+                assessment_ids = [a["id"] for a in (a_res.data or [])]
+
+                # Students in this teacher's classrooms
                 db = self._load_classrooms()
                 student_ids = []
                 for cdata in db.values():
@@ -537,21 +541,20 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                     st_res = supabase_admin.table("students").select("id, name").in_("id", student_ids).execute()
                     student_map = {s["id"]: s["name"] for s in (st_res.data or [])}
 
-                assignments_res = supabase_admin.table("assignments").select("*").eq("assigned_by", teacher_id).execute()
-                total_assessed = len(assignments_res.data or [])
-                completed_count = len([a for a in (assignments_res.data or []) if a.get("status") == "completed"])
+                # Get attempts on teacher's assessments
+                attempts_res = supabase_admin.table("attempts").select("student_id, score, status").in_("assessment_id", assessment_ids).execute() if assessment_ids else None
+                attempts_data = attempts_res.data if attempts_res else []
 
-                assessment_ids = list(set([a["assessment_id"] for a in (assignments_res.data or [])]))
+                # Count unique students who attempted
+                total_assessed = len(set(a["student_id"] for a in attempts_data))
+                
+                # Count completed attempts
+                scored = [a for a in attempts_data if a.get("status") == "evaluated" and a.get("score") is not None]
+                completed_count = len(scored)
+                
                 avg_score = None
-                active_students = set()
-                if assessment_ids:
-                    attempts_res = supabase_admin.table("attempts").select("student_id, score, status").in_("assessment_id", assessment_ids).execute()
-                    scored = [a for a in (attempts_res.data or []) if a.get("status") == "evaluated" and a.get("score") is not None]
-                    if scored:
-                        avg_score = round(sum(a["score"] for a in scored) / len(scored))
-                        active_students = set([a["student_id"] for a in scored])
-
-                total_active = len(active_students) if active_students else (len(student_ids) or 1)
+                if scored:
+                    avg_score = round(sum(a["score"] for a in scored) / len(scored))
 
                 gaps_map = {}
                 support_list = []
@@ -569,12 +572,7 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                                 "status": status,
                             })
 
-                common_gaps = []
-                for k, v in gaps_map.items():
-                    pct = int(round((v / total_active) * 100))
-                    common_gaps.append({"learning_gap": k, "count": v, "percentage": min(100, pct)})
-                
-                common_gaps = sorted(common_gaps, key=lambda x: x["count"], reverse=True)
+                common_gaps = sorted([{"learning_gap": k, "count": v} for k, v in gaps_map.items()], key=lambda x: x["count"], reverse=True)
 
                 return self._send_json({
                     "success": True,
@@ -587,6 +585,7 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                     "support_needed": support_list,
                 })
             except Exception as e:
+                import traceback
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)
 

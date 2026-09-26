@@ -725,7 +725,7 @@
             )}
             {hasClassrooms && (
               <div className="mt-8">
-                <button onClick={() => { setActiveTab('create-assessment'); setActiveClassroom(null); }} className="bg-navy text-white px-6 py-3 rounded-lg font-bold hover:bg-opacity-90 shadow-md">
+                <button onClick={() => { setActiveTab(''); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className="bg-navy text-white px-6 py-3 rounded-lg font-bold hover:bg-opacity-90 shadow-md">
                   Create Assessment
                 </button>
               </div>
@@ -1956,8 +1956,8 @@
       const renderStudentLearning = () => {
         if (practiceGap) return renderStudentPractice();
 
-        const activeGaps = studentLearning.filter(s => s.status !== 'mastered' && s.status !== 'verified');
-        const masteredGaps = studentLearning.filter(s => s.status === 'mastered' || s.status === 'verified');
+        const activeGaps = studentLearning.filter(s => s.status !== 'mastered' && s.status !== 'verified').sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+        const masteredGaps = studentLearning.filter(s => s.status === 'mastered' || s.status === 'verified').sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
         
         return (
           <div className="animate-fade-in max-w-5xl mx-auto py-8">
@@ -2073,20 +2073,20 @@
                 {/* ROLE SPECIFIC NAVIGATION */}
                 {role === 'teacher' ? (
                   <nav className="hidden md:flex gap-6">
-                    <button onClick={() => { setActiveTab('home'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'home' || !activeTab ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Home</button>
-                    <button onClick={() => { setActiveTab('classrooms'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'classrooms' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Classrooms</button>
-                    <button onClick={() => { setActiveTab('assessments'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Assessments</button>
-                    <button onClick={() => { setActiveTab('insights'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'insights' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Insights</button>
-                    <button onClick={() => { setActiveTab('create-assessment'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'create-assessment' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Create Assessment</button>
+                    <button onClick={() => { setActiveTab('home'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'home' || !activeTab ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Home</button>
+                    <button onClick={() => { setActiveTab('classrooms'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'classrooms' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Classrooms</button>
+                    <button onClick={() => { setActiveTab('assessments'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Assessments</button>
+                    <button onClick={() => { setActiveTab('insights'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'insights' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Insights</button>
+                    <button onClick={() => { setActiveTab('create-assessment'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'create-assessment' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Create Assessment</button>
                   </nav>
                 ) : (
                   <nav className="hidden md:flex gap-6">
-                    <button onClick={() => { setActiveTab('home'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'home' || !activeTab ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Home</button>
-                    <button onClick={() => { setActiveTab('my-classrooms'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-classrooms' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Classrooms</button>
-                    <button onClick={() => { setActiveTab('my-assessments'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Assessments</button>
-                    <button onClick={() => { setActiveTab('my-learning'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-learning' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Learning</button>
-                    <button onClick={() => { setActiveTab('practice-mode'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'practice-mode' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Practice Mode</button>
-                    <button onClick={() => { setActiveTab('test-my-knowledge'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'test-my-knowledge' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Test My Knowledge</button>
+                    <button onClick={() => { setActiveTab('home'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'home' || !activeTab ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Home</button>
+                    <button onClick={() => { setActiveTab('my-classrooms'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-classrooms' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Classrooms</button>
+                    <button onClick={() => { setActiveTab('my-assessments'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Assessments</button>
+                    <button onClick={() => { setActiveTab('my-learning'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-learning' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Learning</button>
+                    <button onClick={() => { setActiveTab('practice-mode'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'practice-mode' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Practice Mode</button>
+                    <button onClick={() => { setActiveTab('test-my-knowledge'); setActiveClassroom(null); setTakingAssessment(null); setTakingResult(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'test-my-knowledge' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Test My Knowledge</button>
                   </nav>
                 )}
               </div>
