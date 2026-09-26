@@ -1857,10 +1857,53 @@
         );
       };
 
+      const LearningGapCard = ({ gap, onPractice }) => {
+        const [video, setVideo] = useState(null);
+        
+        useEffect(() => {
+          if (gap.topic) {
+            fetch(`/api/youtube?q=${encodeURIComponent(gap.topic + ' ' + (gap.misconception || ''))}`)
+              .then(r => r.json())
+              .then(d => { if (d.video) setVideo(d.video); })
+              .catch(e => console.error(e));
+          }
+        }, [gap]);
+
+        return (
+          <div className="bg-indigo-50/30 p-6 rounded-xl border border-indigo-100 flex flex-col justify-between shadow-sm hover:shadow-md transition">
+            <div>
+              <span className="text-xs font-bold text-lavender uppercase tracking-wider bg-white px-2 py-1 rounded shadow-sm border border-indigo-50 mb-3 inline-block">{gap.topic}</span>
+              <h4 className="font-bold text-navy text-lg mb-2 capitalize">{gap.misconception || "Pending Diagnosis..."}</h4>
+              <p className="text-sm text-muted mb-4">Status: <span className="font-semibold text-navy">{gap.status}</span></p>
+              
+              {video && (
+                <div className="mb-4">
+                  <p className="text-xs font-bold text-muted mb-2">Recommended Video:</p>
+                  <iframe 
+                    className="w-full h-32 rounded-lg" 
+                    src={`https://www.youtube.com/embed/${video.id}`} 
+                    title={video.title}
+                    frameBorder="0" 
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                    allowFullScreen>
+                  </iframe>
+                </div>
+              )}
+            </div>
+            {gap.status !== 'mastered' && gap.status !== 'verified' && (
+              <button onClick={() => onPractice(gap)} className="w-full bg-navy text-white px-4 py-2 rounded-lg font-bold hover:bg-opacity-90 transition shadow-sm mt-2">
+                Recommended Practice
+              </button>
+            )}
+          </div>
+        );
+      };
+
       const renderStudentLearning = () => {
         if (practiceGap) return renderStudentPractice();
 
-        const gaps = studentLearning.filter(s => s.status !== 'mastered' && s.status !== 'verified');
+        const activeGaps = studentLearning.filter(s => s.status !== 'mastered' && s.status !== 'verified');
+        const masteredGaps = studentLearning.filter(s => s.status === 'mastered' || s.status === 'verified');
         
         return (
           <div className="animate-fade-in max-w-5xl mx-auto py-8">
@@ -1869,27 +1912,29 @@
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-borderlight mb-8">
               <h3 className="text-xl font-semibold text-navy mb-6">Current Learning Gaps</h3>
               
-              {gaps.length === 0 ? (
+              {activeGaps.length === 0 ? (
                 <div className="text-center py-12 text-muted bg-gray-50 rounded-xl border border-dashed border-gray-200">
                   You have no active learning gaps. Great job!
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {gaps.map((gap, i) => (
-                    <div key={i} className="bg-indigo-50/30 p-6 rounded-xl border border-indigo-100 flex flex-col justify-between shadow-sm hover:shadow-md transition">
-                      <div>
-                        <span className="text-xs font-bold text-lavender uppercase tracking-wider bg-white px-2 py-1 rounded shadow-sm border border-indigo-50 mb-3 inline-block">{gap.topic}</span>
-                        <h4 className="font-bold text-navy text-lg mb-2 capitalize">{gap.misconception || "Pending Diagnosis..."}</h4>
-                        <p className="text-sm text-muted mb-4">Status: <span className="font-semibold text-navy">{gap.status}</span></p>
-                      </div>
-                      <button onClick={() => startPractice(gap)} className="w-full bg-navy text-white px-4 py-2 rounded-lg font-bold hover:bg-opacity-90 transition shadow-sm mt-2">
-                        Recommended Practice
-                      </button>
-                    </div>
+                  {activeGaps.map((gap, i) => (
+                    <LearningGapCard key={i} gap={gap} onPractice={startPractice} />
                   ))}
                 </div>
               )}
             </div>
+
+            {masteredGaps.length > 0 && (
+              <div className="bg-white p-8 rounded-2xl shadow-sm border border-borderlight mb-8">
+                <h3 className="text-xl font-semibold text-green-700 mb-6">Mastered Concepts</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {masteredGaps.map((gap, i) => (
+                    <LearningGapCard key={i} gap={gap} onPractice={startPractice} />
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-borderlight">
               <h3 className="text-xl font-semibold text-navy mb-6">Recent Incorrect Answers</h3>

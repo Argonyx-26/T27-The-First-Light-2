@@ -609,6 +609,35 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json({"error": str(e)}, 500)
 
         # ------------------------------------------------------------------
+        # YOUTUBE: Fetch video for topic
+        # ------------------------------------------------------------------
+        if path.startswith("/api/youtube"):
+            query_val = query.get("q", [""])[0]
+            if not query_val:
+                return self._send_json({"error": "Query required"}, 400)
+            
+            video_data = None
+            youtube_key = os.environ.get("YOUTUBE_API_KEY", "")
+            if youtube_key:
+                import urllib.request, urllib.parse
+                try:
+                    q = urllib.parse.quote(query_val)
+                    url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={q}&type=video&key={youtube_key}&maxResults=1"
+                    req = urllib.request.Request(url)
+                    with urllib.request.urlopen(req, timeout=3) as response:
+                        yt_res = json.loads(response.read().decode())
+                        if yt_res.get("items"):
+                            item = yt_res["items"][0]
+                            video_data = {
+                                "id": item["id"]["videoId"],
+                                "title": item["snippet"]["title"],
+                                "channel": item["snippet"]["channelTitle"]
+                            }
+                except Exception as e:
+                    print(f"[YOUTUBE ERROR] {e}")
+            return self._send_json({"video": video_data})
+
+        # ------------------------------------------------------------------
         # STUDENT: Learning state (gaps)
         # ------------------------------------------------------------------
         if path == "/api/student/learning":
