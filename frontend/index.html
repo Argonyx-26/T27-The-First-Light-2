@@ -575,7 +575,7 @@
         } else if (role === 'student') {
           loadStudentData();
         }
-      }, [session, role]);
+      }, [session, role, activeTab]);
 
       const handleConnect = async () => {
         setImporting(true);
@@ -1137,7 +1137,7 @@
           } else {
             alert("Error submitting: " + data.error);
           }
-        } catch (e) { alert("Failed to submit"); }
+        } catch (e) { alert("Failed to submit: " + e.message); }
       };
 
 

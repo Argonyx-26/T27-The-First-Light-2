@@ -264,16 +264,20 @@ def submit_attempt(token: str, attempt_id: str, student_answers: dict):
     assessment_id = attempt.data[0]["assessment_id"]
     
     # Fetch question keys (server-side correctness only)
-    keys_res = supabase_admin.table("question_keys").select(
-        "question_id, correct_answer, misconception_target"
-    ).in_("question_id", list(student_answers.keys())).execute()
-    keys_map = {k["question_id"]: k for k in keys_res.data}
-    
-    # Fetch question details
-    q_res = supabase_admin.table("questions").select(
-        "id, question_text, topic, difficulty"
-    ).in_("id", list(student_answers.keys())).execute()
-    q_map = {q["id"]: q for q in q_res.data}
+    if not student_answers:
+        keys_map = {}
+        q_map = {}
+    else:
+        keys_res = supabase_admin.table("question_keys").select(
+            "question_id, correct_answer, misconception_target"
+        ).in_("question_id", list(student_answers.keys())).execute()
+        keys_map = {k["question_id"]: k for k in keys_res.data}
+        
+        # Fetch question details
+        q_res = supabase_admin.table("questions").select(
+            "id, question_text, topic, difficulty"
+        ).in_("id", list(student_answers.keys())).execute()
+        q_map = {q["id"]: q for q in q_res.data}
     
     # Fetch assessment topic as fallback
     a_res = supabase_admin.table("assessments").select("topic").eq("id", assessment_id).execute()
@@ -315,11 +319,12 @@ def submit_attempt(token: str, attempt_id: str, student_answers: dict):
         supabase_admin.table("answers").insert(answers_to_insert).execute()
         
     # Update attempt score
+    import datetime
     score = (correct_count / total * 100) if total > 0 else 0
     supabase_admin.table("attempts").update({
         "status": "evaluated",
         "score": score,
-        "submitted_at": "now()"
+        "submitted_at": datetime.datetime.utcnow().isoformat()
     }).eq("id", attempt_id).execute()
     
     # Mark assignment complete
