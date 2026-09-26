@@ -319,12 +319,27 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
             provider_token = query.get("provider_token", [None])[0]
 
             try:
-                from db_client import supabase, get_teacher_by_auth_id, upsert_student
+                from db_client import supabase, get_teacher_by_auth_id, upsert_student, supabase_admin
                 user_res = supabase.auth.get_user(token)
                 auth_uid = user_res.user.id
                 teacher = get_teacher_by_auth_id(auth_uid)
+                
+                # If not a teacher, check if they are a student and return their enrolled classrooms
                 if not teacher:
+                    st = supabase_admin.table("students").select("id").eq("auth_user_id", auth_uid).execute()
+                    if st.data:
+                        student_id = st.data[0]["id"]
+                        classrooms_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "classrooms.json")
+                        res = []
+                        if os.path.exists(classrooms_path):
+                            with open(classrooms_path, "r") as f:
+                                db = json.load(f)
+                            for cid, cdata in db.items():
+                                if student_id in cdata.get("students", []):
+                                    res.append({"id": cid, "name": cdata.get("name", "Classroom"), "descriptionHeading": cdata.get("section", "")})
+                        return self._send_json(res)
                     return self._send_json([])
+
                 teacher_id = teacher["id"]
 
                 # If we have a provider_token, fetch live from Google Classroom API
@@ -1109,7 +1124,7 @@ Return ONLY a valid JSON array. Each item:
                     a_type="self_practice",
                     classroom_id=None,
                 )
-                return self._send_json({"success": True, "assessment": assessment, "questions": questions})
+                return self._send_json({"success": True, "assessment_id": assessment["id"], "assessment": assessment, "questions": questions})
             except Exception as e:
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)

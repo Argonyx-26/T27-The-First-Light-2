@@ -541,6 +541,11 @@
              const resLearning = await fetch("/api/student/learning", { headers });
              const dataLearning = await resLearning.json();
              setStudentLearning(dataLearning || []);
+
+             // Also fetch student's classrooms
+             const resClassrooms = await fetch("/api/classrooms", { headers });
+             const dataClassrooms = await resClassrooms.json();
+             setClassrooms(Array.isArray(dataClassrooms) ? dataClassrooms : []);
            } catch (e) { console.error("Error loading student data", e); }
         };
 
