@@ -496,6 +496,113 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
         path = parsed.path
 
         # ------------------------------------------------------------------
+        # GOOGLE CLASSROOM CONNECT (InstalledAppFlow — opens browser popup)
+        # This runs in its own thread (ThreadingTCPServer), so it blocks
+        # only this request while the teacher completes the Google consent.
+        # ------------------------------------------------------------------
+        if path == "/api/classroom/connect":
+            token = self._get_bearer_token()
+            if not token:
+                return self._send_json({"error": "Unauthorized"}, 401)
+
+            if not GOOGLE_API_AVAILABLE:
+                return self._send_json({"error": "Google API libraries not installed. Run: pip install google-api-python-client google-auth-oauthlib"}, 500)
+
+            client_secret = os.path.join(PERSON_C_DIR, "client_secret.json")
+            if not os.path.exists(client_secret):
+                return self._send_json({"error": "client_secret.json not found in person-c-classroom folder"}, 500)
+
+            try:
+                from db_client import supabase, supabase_admin, upsert_student
+                print("[CLASSROOM STEP 1] Verifying teacher identity")
+                user_res = supabase.auth.get_user(token)
+                auth_uid = user_res.user.id
+
+                t_res = supabase_admin.table("teachers").select("id").eq("auth_user_id", auth_uid).execute()
+                if not t_res.data:
+                    return self._send_json({"error": "Only teachers can connect Google Classroom"}, 403)
+                teacher_id = t_res.data[0]["id"]
+                print(f"[CLASSROOM STEP 2] Teacher verified: {teacher_id}")
+
+                SCOPES = [
+                    "https://www.googleapis.com/auth/classroom.courses.readonly",
+                    "https://www.googleapis.com/auth/classroom.rosters.readonly",
+                    "https://www.googleapis.com/auth/classroom.profile.emails",
+                ]
+
+                print("[CLASSROOM STEP 3] Opening Google OAuth consent window in browser")
+                flow = InstalledAppFlow.from_client_secrets_file(client_secret, SCOPES)
+                creds = flow.run_local_server(port=0)
+                print("[CLASSROOM STEP 4] OAuth consent complete, credentials received")
+
+                service = build("classroom", "v1", credentials=creds)
+                print("[CLASSROOM STEP 5] Fetching courses from Google Classroom API")
+
+                results = service.courses().list(pageSize=20).execute()
+                courses = results.get("courses", [])
+                print(f"[CLASSROOM STEP 6] Retrieved {len(courses)} courses")
+
+                if not courses:
+                    return self._send_json({
+                        "success": True,
+                        "imported": 0,
+                        "message": "Connected but no courses found in your Google Classroom account."
+                    })
+
+                db_classrooms = self._load_classrooms()
+
+                for course in courses:
+                    c_id = course["id"]
+                    c_name = course.get("name", "Untitled Course")
+                    print(f"[CLASSROOM STEP 7] Fetching roster for: {c_name}")
+
+                    try:
+                        roster_result = service.courses().students().list(courseId=c_id).execute()
+                        google_students = roster_result.get("students", [])
+                    except Exception as e:
+                        print(f"[CLASSROOM WARNING] Could not fetch roster for {c_name}: {e}")
+                        google_students = []
+
+                    student_ids = []
+                    for s in google_students:
+                        profile = s.get("profile", {})
+                        name = profile.get("name", {}).get("fullName", "Unknown")
+                        email = profile.get("emailAddress", "").lower()
+                        if not email:
+                            continue
+                        try:
+                            db_id = upsert_student(email, name)
+                            if db_id:
+                                student_ids.append(db_id)
+                        except Exception as e:
+                            print(f"[CLASSROOM WARNING] Could not upsert student {email}: {e}")
+
+                    db_classrooms[c_id] = {
+                        "name": c_name,
+                        "teacher_id": teacher_id,
+                        "students": student_ids,
+                    }
+
+                self._save_classrooms(db_classrooms)
+                print(f"[CLASSROOM STEP 8] Persisted {len(courses)} classrooms")
+
+                teacher_rooms = [
+                    {"id": k, "name": v["name"], "student_count": len(v.get("students", []))}
+                    for k, v in db_classrooms.items()
+                    if v.get("teacher_id") == teacher_id
+                ]
+                return self._send_json({
+                    "success": True,
+                    "imported": len(courses),
+                    "classrooms": teacher_rooms
+                })
+
+            except Exception as e:
+                traceback.print_exc()
+                print(f"[CLASSROOM ERROR] {e}")
+                return self._send_json({"error": f"Google Classroom connection failed: {str(e)}"}, 500)
+
+        # ------------------------------------------------------------------
         # AUTH SYNC: Identify or provision user after Google login
         # ------------------------------------------------------------------
         if path == "/api/auth/sync":

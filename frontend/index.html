@@ -543,41 +543,40 @@
         }
       }, [session, role]);
 
-      const handleConnect = () => {
+      const handleConnect = async () => {
         setImporting(true);
-        // Redirect to backend OAuth flow with JWT token
-        window.location.href = `/api/classroom/auth?token=${session.access_token}`;
+        setClassroomConnectState({ status: 'loading', msg: "Connecting to Google Classroom...", detail: "A browser window will open for you to grant access. Please complete it and return here." });
+        try {
+          const res = await fetch("/api/classroom/connect", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${session.access_token}` }
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            if (data.imported === 0) {
+              setClassroomConnectState({ status: 'error', msg: "No classrooms found.", detail: data.message || "Your Google Classroom account has no active courses." });
+            } else {
+              setClassroomConnectState({ status: 'success', msg: `Google Classroom connected`, detail: `${data.imported} classroom${data.imported !== 1 ? 's' : ''} imported successfully.` });
+              loadData();
+            }
+          } else {
+            const msg = data.error || "Unknown error";
+            if (msg.includes("permission") || msg.includes("denied")) {
+              setClassroomConnectState({ status: 'error', msg: "Permission denied.", detail: "Google Classroom permission was denied. Please reconnect and allow access." });
+            } else if (msg.includes("not found") || msg.includes("configured")) {
+              setClassroomConnectState({ status: 'error', msg: "Google Classroom isn't configured correctly.", detail: "Please check the Google connection settings." });
+            } else {
+              setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: msg });
+            }
+          }
+        } catch (e) {
+          setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: "Network error reaching the server. Make sure the server is running." });
+        }
+        setImporting(false);
       };
       
-      // Handle OAuth redirect results intercepting root
-      useEffect(() => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const code = urlParams.get('code');
-        const state = urlParams.get('state');
-        const error = urlParams.get('error');
-        
-        if (code && state) {
-           setClassroomConnectState({ status: 'loading', msg: "Finalizing connection...", detail: "Please wait while we securely connect your classrooms." });
-           window.history.replaceState({}, document.title, "/"); // Hide ugly URL tokens immediately
-           
-           fetch(`/api/classroom/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`)
-             .then(res => res.json())
-             .then(data => {
-                if (data.success) {
-                   setClassroomConnectState({ status: 'success', msg: "Google Classroom connected", detail: "Your classrooms have been successfully imported." });
-                   loadData();
-                } else {
-                   setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: data.error || "Unknown error occurred." });
-                }
-             })
-             .catch(err => {
-                setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: "Network error while reaching the server." });
-             });
-        } else if (error) {
-           setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: "Google returned an error: " + error });
-           window.history.replaceState({}, document.title, "/");
-        }
-      }, []);
+
+
 
       const falseMastery = students.filter(s => s.flagged_false_mastery);
       const activeStudents = students.filter(s => s.status !== "pending");
