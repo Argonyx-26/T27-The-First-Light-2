@@ -621,10 +621,29 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                 auth_uid = user_res.user.id
                 student = supabase_admin.table("students").select("id").eq("auth_user_id", auth_uid).execute()
                 if not student.data:
-                    return self._send_json([])
+                    return self._send_json({"states": [], "incorrect_answers": []})
                 student_id = student.data[0]["id"]
                 states = supabase_admin.table("student_state").select("*").eq("student_id", student_id).execute()
-                return self._send_json(states.data or [])
+                
+                # Fetch recent incorrect answers
+                attempts_res = supabase_admin.table("attempts").select("id").eq("student_id", student_id).execute()
+                attempt_ids = [a["id"] for a in (attempts_res.data or [])]
+                
+                recent_incorrect = []
+                if attempt_ids:
+                    ans_res = supabase_admin.table("answers").select(
+                        "question_id, selected_answer, questions(question_text, topic)"
+                    ).in_("attempt_id", attempt_ids).eq("is_correct", False).execute()
+                    
+                    for ans in (ans_res.data or []):
+                        if ans.get("questions"):
+                            recent_incorrect.append({
+                                "question_text": ans["questions"]["question_text"],
+                                "topic": ans["questions"]["topic"],
+                                "selected_answer": ans["selected_answer"]
+                            })
+                            
+                return self._send_json({"states": states.data or [], "incorrect_answers": recent_incorrect})
             except Exception as e:
                 traceback.print_exc()
                 return self._send_json({"error": str(e)}, 500)
@@ -1079,6 +1098,47 @@ Return ONLY JSON:
                 return self._send_json({"error": str(e)}, 500)
 
 
+
+        # ------------------------------------------------------------------
+        # STUDENT: Interactive Tutor Chat
+        # ------------------------------------------------------------------
+        if path == "/api/tutor/chat":
+            token = self._get_bearer_token()
+            if not token:
+                return self._send_json({"error": "Unauthorized"}, 401)
+            payload = self._read_json_body()
+            topic = payload.get("topic", "")
+            history = payload.get("history", [])
+            if not topic:
+                return self._send_json({"error": "Topic is required"}, 400)
+            
+            try:
+                from tutor_agent import generate_tutor_response
+                response = generate_tutor_response(topic, history)
+                
+                # If persistent misconception is identified, save it to the DB
+                if response.get("persistent_misconception"):
+                    from db_client import supabase, supabase_admin
+                    user_res = supabase.auth.get_user(token)
+                    auth_uid = user_res.user.id
+                    st = supabase_admin.table("students").select("id").eq("auth_user_id", auth_uid).execute()
+                    if st.data:
+                        student_id = st.data[0]["id"]
+                        supabase_admin.table("student_state").insert({
+                            "student_id": student_id,
+                            "topic": topic,
+                            "misconception": response["persistent_misconception"],
+                            "status": "unresolved",
+                            "attempts": 1,
+                            "verification_result": "needs_more_practice",
+                            "flagged_false_mastery": False
+                        }).execute()
+
+                return self._send_json(response)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return self._send_json({"error": str(e)}, 500)
 
         # ------------------------------------------------------------------
         # STUDENT: Self-directed test (Test My Knowledge)

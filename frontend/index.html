@@ -394,6 +394,7 @@
       const [takingIndex, setTakingIndex] = useState(0);
       const [takingResult, setTakingResult] = useState(null);
             const [studentLearning, setStudentLearning] = useState([]);
+      const [studentIncorrect, setStudentIncorrect] = useState([]);
       const [practiceGap, setPracticeGap] = useState(null);
       const [practiceData, setPracticeData] = useState(null);
       const [practiceAnswer, setPracticeAnswer] = useState('');
@@ -408,6 +409,15 @@
       const [testDiff, setTestDiff] = useState('medium');
       const [testCount, setTestCount] = useState(3);
       const [isGeneratingTest, setIsGeneratingTest] = useState(false);
+      
+      // Interactive Tutor State
+      const [tutorTopic, setTutorTopic] = useState('');
+      const [tutorHistory, setTutorHistory] = useState([]);
+      const [isTutorActive, setIsTutorActive] = useState(false);
+      const [tutorInput, setTutorInput] = useState('');
+      const [tutorLoading, setTutorLoading] = useState(false);
+      const [tutorDone, setTutorDone] = useState(false);
+
       const [misconceptions, setMisconceptions] = useState([]);
       const [rootCauses, setRootCauses] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -540,7 +550,13 @@
              
              const resLearning = await fetch("/api/student/learning", { headers });
              const dataLearning = await resLearning.json();
-             setStudentLearning(dataLearning || []);
+             if (dataLearning.states) {
+               setStudentLearning(dataLearning.states);
+               setStudentIncorrect(dataLearning.incorrect_answers || []);
+             } else {
+               setStudentLearning(dataLearning || []);
+               setStudentIncorrect([]);
+             }
 
              // Also fetch student's classrooms
              const resClassrooms = await fetch("/api/classrooms", { headers });
@@ -1508,6 +1524,131 @@
         setIsGeneratingTest(false);
       };
 
+      const handleTutorStart = async (e) => {
+        e.preventDefault();
+        setTutorLoading(true);
+        setIsTutorActive(true);
+        setTutorHistory([]);
+        setTutorDone(false);
+        try {
+          const res = await fetch('/api/tutor/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ topic: tutorTopic, history: [] })
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          setTutorHistory([{ role: 'assistant', content: data.text }]);
+        } catch (e) {
+          alert("Failed to start tutor");
+          setIsTutorActive(false);
+        }
+        setTutorLoading(false);
+      };
+
+      const handleTutorSubmit = async (e) => {
+        e.preventDefault();
+        if (!tutorInput.trim() || tutorLoading) return;
+        
+        const newHistory = [...tutorHistory, { role: 'user', content: tutorInput }];
+        setTutorHistory(newHistory);
+        setTutorInput('');
+        setTutorLoading(true);
+        
+        try {
+          const res = await fetch('/api/tutor/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ topic: tutorTopic, history: newHistory })
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          setTutorHistory([...newHistory, { role: 'assistant', content: data.text }]);
+          if (data.is_done) setTutorDone(true);
+        } catch (e) {
+          alert("Failed to send message");
+        }
+        setTutorLoading(false);
+      };
+
+      const renderInteractiveTutor = () => {
+        if (!isTutorActive) {
+          return (
+            <div className="max-w-2xl mx-auto py-12 animate-fade-in">
+              <div className="bg-white p-10 rounded-2xl shadow-sm border border-borderlight">
+                <h2 className="text-3xl font-serif-custom font-bold text-navy mb-4">Interactive Practice</h2>
+                <p className="text-lg text-muted mb-8">Chat with an AI tutor that adapts to your answers. Master concepts through a near-to-far transfer progression.</p>
+                
+                <form onSubmit={handleTutorStart} className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-bold text-navy mb-2">What would you like to practice?</label>
+                    <input type="text" required value={tutorTopic} onChange={e => setTutorTopic(e.target.value)} placeholder="e.g. Adding Fractions, Photosynthesis, Newton's Laws" className="w-full p-4 rounded-xl border border-borderlight focus:border-lavender focus:ring-2 focus:ring-indigo-50 outline-none transition" />
+                  </div>
+                  <button type="submit" className="w-full bg-navy text-white p-4 rounded-xl font-bold hover:bg-opacity-90 shadow-md">
+                    Start Interactive Practice
+                  </button>
+                </form>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div className="max-w-3xl mx-auto py-8 animate-fade-in flex flex-col h-[80vh]">
+            <div className="flex items-center justify-between mb-4 border-b border-borderlight pb-4">
+              <div>
+                <h2 className="text-2xl font-bold text-navy">Interactive Tutor</h2>
+                <p className="text-sm text-muted">Topic: {tutorTopic}</p>
+              </div>
+              <button onClick={() => setIsTutorActive(false)} className="text-sm font-bold text-muted hover:text-navy">
+                End Session
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto bg-white p-6 rounded-2xl border border-borderlight shadow-inner mb-4 space-y-6">
+              {tutorHistory.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] p-4 rounded-2xl ${msg.role === 'user' ? 'bg-navy text-white rounded-br-none' : 'bg-indigo-50 border border-indigo-100 text-navy rounded-bl-none'}`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+              {tutorLoading && (
+                <div className="flex justify-start animate-pulse">
+                  <div className="max-w-[80%] p-4 rounded-2xl bg-gray-100 text-gray-500 rounded-bl-none">
+                    Tutor is typing...
+                  </div>
+                </div>
+              )}
+              {tutorDone && (
+                <div className="flex justify-center mt-6">
+                  <div className="bg-green-100 border border-green-300 text-green-800 p-4 rounded-xl text-center">
+                    <p className="font-bold text-lg mb-2">🎉 Mastery Achieved!</p>
+                    <p>You have successfully completed the progression for this topic.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {!tutorDone && (
+              <form onSubmit={handleTutorSubmit} className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={tutorInput} 
+                  onChange={e => setTutorInput(e.target.value)} 
+                  placeholder="Type your answer here..." 
+                  className="flex-1 p-4 rounded-xl border border-borderlight focus:border-lavender focus:ring-2 focus:ring-indigo-50 outline-none transition"
+                  disabled={tutorLoading}
+                />
+                <button type="submit" disabled={!tutorInput.trim() || tutorLoading} className="bg-navy text-white px-8 rounded-xl font-bold hover:bg-opacity-90 disabled:opacity-50 shadow-md">
+                  Send
+                </button>
+              </form>
+            )}
+          </div>
+        );
+      };
+
       const renderTestMyKnowledge = () => {
         if (isGeneratingTest) {
           return (
@@ -1666,6 +1807,53 @@
                 </div>
               )}
             </div>
+
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-borderlight">
+              <h3 className="text-xl font-semibold text-navy mb-6">Recent Incorrect Answers</h3>
+              
+              {(!studentIncorrect || studentIncorrect.length === 0) ? (
+                <div className="text-center py-12 text-muted bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                  No recent incorrect questions.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {studentIncorrect.map((inc, i) => (
+                    <div key={i} className="bg-red-50 p-6 rounded-xl border border-red-100 flex flex-col justify-between">
+                      <span className="text-xs font-bold text-red-600 uppercase tracking-wider mb-2">{inc.topic}</span>
+                      <p className="font-medium text-navy mb-3">{inc.question_text}</p>
+                      <p className="text-sm text-red-700 font-semibold">Your Answer: {inc.selected_answer}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+      const renderStudentAssessmentsGlobal = () => {
+        const assigned = studentAssessments.filter(a => a.status === 'assigned');
+        return (
+          <div className="animate-fade-in max-w-5xl mx-auto py-8">
+            <h2 className="text-3xl font-serif-custom font-bold text-navy mb-8">My Assessments</h2>
+            <div className="space-y-4">
+              {assigned.length === 0 ? (
+                <div className="text-center py-12 text-muted bg-white rounded-xl shadow-sm border border-borderlight">No pending assessments.</div>
+              ) : (
+                assigned.map(a => (
+                  <div key={a.id} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm flex items-center justify-between group">
+                    <div>
+                      <span className="text-xs font-bold text-lavender uppercase tracking-wider bg-indigo-50 px-2 py-1 rounded mb-2 inline-block">New Assessment</span>
+                      <h3 className="text-xl font-bold text-navy mb-1">{a.title}</h3>
+                      <p className="text-sm text-muted">{a.topic} &bull; {a.question_count} Questions</p>
+                    </div>
+                    <button onClick={() => handleStartAssessment(a.id)} className="bg-navy text-white px-6 py-2 rounded-lg font-bold hover:bg-opacity-90 transition shadow-sm group-hover:-translate-y-0.5">
+                      Start Test →
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         );
       };
@@ -1680,8 +1868,9 @@
         switch(activeTab) {
           case 'home': return renderStudentHome();
           case 'my-classrooms': return renderStudentClassroomList();
-          case 'my-assessments': return <div className="text-center py-12 text-muted">No pending assessments.</div>;
+          case 'my-assessments': return renderStudentAssessmentsGlobal();
           case 'my-learning': return renderStudentLearning();
+          case 'interactive-tutor': return renderInteractiveTutor();
           case 'test-my-knowledge': return renderTestMyKnowledge();
           default: return renderStudentHome();
         }
@@ -1714,6 +1903,7 @@
                     <button onClick={() => { setActiveTab('my-classrooms'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-classrooms' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Classrooms</button>
                     <button onClick={() => { setActiveTab('my-assessments'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Assessments</button>
                     <button onClick={() => { setActiveTab('my-learning'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-learning' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Learning</button>
+                    <button onClick={() => { setActiveTab('interactive-tutor'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'interactive-tutor' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Interactive Tutor</button>
                     <button onClick={() => { setActiveTab('test-my-knowledge'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'test-my-knowledge' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Test My Knowledge</button>
                   </nav>
                 )}
