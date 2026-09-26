@@ -1,4 +1,41 @@
-﻿__pycache__/
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
 *.pyc
-.venv/
+
+# Secrets — NEVER commit these
+*.env
 .env
+.env.*
+client_secret.json
+credentials.json
+token.json
+service_account.json
+
+# Data / runtime files
+data/classrooms.json
+shared/live_state.json
+backend/shared/live_state.json
+
+# Temporary patch/debug scripts
+patch_*.py
+fix_*.py
+check_*.py
+inject_*.py
+clean_*.py
+read_*.py
+rename_*.py
+unify_*.py
+update_*.py
+verify_*.py
+add_*.py
+dump_*.txt
+*_dump.txt
+*_full.txt
+tail.txt
+test.html
+test_supa.py
+ac_dump.txt

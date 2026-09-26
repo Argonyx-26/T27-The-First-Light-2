@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Classroom Insight - Teacher Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Supabase JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  
+  <!-- Framer Motion -->
+  <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js"></script>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    body {
+      background-color: #F6F4F0;
+      font-family: 'Inter', sans-serif;
+      color: #17142F;
+      margin: 0;
+      padding: 0;
+    }
+    .font-serif-custom {
+      font-family: 'Playfair Display', serif;
+    }
+  </style>
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            page: '#F6F4F0',
+            card: '#FFFFFF',
+            navy: '#17142F',
+            navylight: '#1E1B3A',
+            lavender: '#F2E5FF',
+            successbg: '#1D6141',
+            warnbg: '#FFD3A7',
+            dangerbg: '#920137',
+            muted: '#6B7280',
+            borderlight: '#E5E5E5'
+          },
+          boxShadow: {
+            'soft': '0 8px 30px rgba(0, 0, 0, 0.04)',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const { motion, AnimatePresence } = window.Motion;
+
+    // -------------------------------------------------------------------------
+    // Helper Components
+    // -------------------------------------------------------------------------
+    const Pill = ({ children, type }) => {
+      let baseClasses = "px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ";
+      if (type === "success") {
+        baseClasses += "bg-successbg text-white";
+      } else if (type === "warning") {
+        baseClasses += "bg-warnbg text-navy";
+      } else if (type === "danger") {
+        baseClasses += "bg-dangerbg text-white";
+      } else if (type === "lavender") {
+        baseClasses += "bg-lavender text-navy";
+      } else {
+        baseClasses += "bg-gray-100 text-muted";
+      }
+      return <span className={baseClasses}>{children}</span>;
+    };
+
+    // -------------------------------------------------------------------------
+    // Main App
+    // -------------------------------------------------------------------------
+    const AssessmentCreator = ({ session, classrooms }) => {
+      // PREREQUISITE BLOCKER: Must have a connected classroom
+      if (!classrooms || classrooms.length === 0) {
+        return (
+          <div className="max-w-3xl mx-auto py-16 animate-fade-in text-center">
+             <div className="bg-white p-10 rounded-2xl shadow-sm border border-borderlight">
+                <div className="w-16 h-16 bg-lavender rounded-full flex items-center justify-center mx-auto mb-6">
+                   <svg className="w-8 h-8 text-navy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                </div>
+                <h2 className="text-2xl font-serif-custom font-bold text-navy mb-4">Google Classroom Required</h2>
+                <p className="text-muted text-lg mb-8 max-w-lg mx-auto">You must connect a Google Classroom before you can create and assign assessments. This ensures your students can seamlessly access their practice.</p>
+                <button onClick={() => window.location.href = `/api/classroom/auth?token=${session.access_token}`} className="bg-navy text-white px-8 py-3 rounded-xl font-bold hover:bg-opacity-90 transition shadow-md text-lg">
+                   Connect Google Classroom
+                </button>
+             </div>
+          </div>
+        );
+      }
+      
+      const [title, setTitle] = useState('');
+      const [topic, setTopic] = useState('');
+      const [description, setDescription] = useState('');
+      const [questions, setQuestions] = useState([]);
+      
+      const [genSubtopic, setGenSubtopic] = useState('');
+      const [genCount, setGenCount] = useState(3);
+      const [genDiff, setGenDiff] = useState('medium');
+      const [generating, setGenerating] = useState(false);
+      const [regenIndex, setRegenIndex] = useState(-1);
+      const [saving, setSaving] = useState(false);
+
+      const handleGenerate = async () => {
+        if (!topic) return alert("Please specify a Topic first.");
+        setGenerating(true);
+        try {
+          const res = await fetch('/api/generate-questions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({
+              topic: topic,
+              subtopic: genSubtopic,
+              num_questions: genCount,
+              difficulty: genDiff
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setQuestions([...questions, ...data.questions]);
+          } else {
+            alert('Error generating questions: ' + data.error);
+          }
+        } catch (e) { alert('Failed to generate questions'); }
+        setGenerating(false);
+      };
+
+      const handleRegenerateOne = async (index) => {
+        setRegenIndex(index);
+        try {
+          const res = await fetch('/api/generate-questions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({
+              topic: topic || questions[index].topic,
+              subtopic: genSubtopic,
+              num_questions: 1,
+              difficulty: questions[index].difficulty || genDiff
+            })
+          });
+          const data = await res.json();
+          if (data.success && data.questions.length > 0) {
+            const updated = [...questions];
+            updated[index] = data.questions[0];
+            setQuestions(updated);
+          } else {
+            alert('Error generating question');
+          }
+        } catch (e) { alert('Failed to regenerate'); }
+        setRegenIndex(-1);
+      };
+
+      const updateQuestion = (index, field, value) => {
+        const updated = [...questions];
+        updated[index][field] = value;
+        setQuestions(updated);
+      };
+
+      const updateOption = (qIndex, optIndex, value) => {
+        const updated = [...questions];
+        const oldVal = updated[qIndex].options[optIndex];
+        updated[qIndex].options[optIndex] = value;
+        // If they edit the text of the currently selected correct answer, keep them in sync
+        if (updated[qIndex].correct_answer === oldVal && oldVal !== "") {
+            updated[qIndex].correct_answer = value;
+        }
+        setQuestions(updated);
+      };
+
+      const setCorrectAnswer = (qIndex, optIndex) => {
+        const updated = [...questions];
+        updated[qIndex].correct_answer = updated[qIndex].options[optIndex];
+        setQuestions(updated);
+      };
+
+      const removeQuestion = (index) => {
+        setQuestions(questions.filter((_, i) => i !== index));
+      };
+
+      const handleSave = async (status, classroom_id = null) => {
+        setSaving(status);
+        try {
+          const res = await fetch('/api/assessments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ title, topic, description, questions, status, classroom_id })
+          });
+          const data = await res.json();
+          if (data.success) {
+            alert(`Assessment ${status} successfully!`);
+            if (status === 'published') {
+               setTitle(''); setTopic(''); setDescription(''); setQuestions([]);
+            }
+          } else {
+            alert('Error saving assessment: ' + data.error);
+          }
+        } catch (e) { alert('Failed to save assessment'); }
+        setSaving(false);
+      };
+
+      return (
+        <div className="max-w-4xl mx-auto py-8 animate-fade-in">
+          <h2 className="text-3xl font-serif-custom font-bold text-navy mb-8">Create Assessment</h2>
+          
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-borderlight mb-8">
+            <h3 className="text-xl font-semibold text-navy mb-4">Assessment Details</h3>
+            <div className="grid grid-cols-2 gap-6 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1">Assessment Title *</label>
+                <input type="text" className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-lavender outline-none transition" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Midterm Quiz" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1">Topic *</label>
+                <input type="text" className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-lavender outline-none transition" value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. Physics" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-muted mb-1">Description (optional)</label>
+              <textarea className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-lavender outline-none transition" rows="2" value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief instructions for students..."></textarea>
+            </div>
+          </div>
+
+          <div className="bg-[#f8f7fb] p-6 rounded-2xl shadow-sm border border-indigo-100 mb-8">
+            <h3 className="text-xl font-semibold text-navy mb-4 flex items-center gap-2">
+               ✨ AI Question Generator
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-muted mb-1">Subtopic (optional focus)</label>
+                <input type="text" className="w-full border p-2 rounded-lg" value={genSubtopic} onChange={e => setGenSubtopic(e.target.value)} placeholder="e.g. Kinematics" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1">Difficulty</label>
+                <select className="w-full border p-2 rounded-lg" value={genDiff} onChange={e => setGenDiff(e.target.value)}>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-muted mb-1">Number of Questions</label>
+                <input type="number" className="w-full border p-2 rounded-lg" value={genCount} onChange={e => setGenCount(parseInt(e.target.value))} min="1" max="10" />
+              </div>
+            </div>
+            <button onClick={handleGenerate} disabled={generating || !topic} className="w-full md:w-auto bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 disabled:opacity-50 transition shadow-md">
+              {generating ? "Generating..." : "Generate Questions"}
+            </button>
+            {!topic && <p className="text-dangerbg text-xs mt-2">Topic is required to generate questions.</p>}
+          </div>
+
+          {questions.length > 0 && (
+            <div className="mb-8 space-y-6">
+              <div className="flex justify-between items-end mb-4">
+                 <h3 className="text-2xl font-semibold text-navy">Review Questions ({questions.length})</h3>
+              </div>
+              {questions.map((q, idx) => (
+                <div key={idx} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm relative group">
+                  <div className="absolute top-4 right-4 flex gap-2">
+                    <button onClick={() => handleRegenerateOne(idx)} disabled={regenIndex === idx} className="text-xs font-semibold text-navy bg-lavender px-3 py-1 rounded hover:bg-opacity-80 transition disabled:opacity-50">
+                      {regenIndex === idx ? "..." : "Regenerate"}
+                    </button>
+                    <button onClick={() => removeQuestion(idx)} className="text-xs font-semibold text-dangerbg bg-red-50 px-3 py-1 rounded hover:bg-red-100 transition">
+                      Delete
+                    </button>
+                  </div>
+                  
+                  <div className="mb-4 pr-32">
+                    <label className="block text-sm font-bold text-navy mb-1">Question {idx + 1}</label>
+                    <textarea className="w-full border border-transparent hover:border-borderlight focus:border-lavender p-2 rounded outline-none resize-y transition bg-gray-50 font-medium" rows="2" value={q.question_text} onChange={e => updateQuestion(idx, 'question_text', e.target.value)} />
+                  </div>
+                  
+                  <div className="space-y-3 mb-6 pl-4">
+                    {q.options.map((opt, i) => {
+                      const isCorrect = opt === q.correct_answer && opt.trim() !== "";
+                      return (
+                        <div key={i} className="flex items-center gap-3">
+                          <input 
+                            type="radio" 
+                            name={`correct-${idx}`} 
+                            checked={isCorrect} 
+                            onChange={() => setCorrectAnswer(idx, i)}
+                            className="w-4 h-4 text-navy focus:ring-navy" 
+                          />
+                          <input 
+                            type="text" 
+                            className={`flex-1 border p-2 rounded outline-none transition ${isCorrect ? 'border-successbg bg-green-50/30 font-semibold' : 'border-gray-200 hover:border-gray-300'}`} 
+                            value={opt} 
+                            onChange={e => updateOption(idx, i, e.target.value)} 
+                            placeholder={`Option ${['A','B','C','D'][i]}`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  <div className="bg-indigo-50/50 p-4 rounded-lg border border-indigo-100">
+                    <div className="mb-3">
+                      <label className="block text-xs font-bold text-navy uppercase tracking-wider mb-1">Explanation (Teacher Only)</label>
+                      <textarea className="w-full border border-white/50 bg-white/50 p-2 rounded text-sm outline-none focus:bg-white transition" rows="2" value={q.explanation || ''} onChange={e => updateQuestion(idx, 'explanation', e.target.value)} placeholder="Why is this correct?" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-navy uppercase tracking-wider mb-1">Misconception Target (Teacher Only)</label>
+                      <input type="text" className="w-full border border-white/50 bg-white/50 p-2 rounded text-sm outline-none focus:bg-white transition" value={q.misconception_target || ''} onChange={e => updateQuestion(idx, 'misconception_target', e.target.value)} placeholder="e.g. Addition instead of multiplication" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="pt-4 border-t border-borderlight">
+            {saving === 'assigning' ? (
+               <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100 flex flex-col gap-4 animate-fade-in">
+                 <h4 className="font-bold text-navy text-lg">Assign to Classroom</h4>
+                 {classrooms && classrooms.length > 0 ? (
+                   <>
+                     <select id="assign-select" className="w-full p-3 rounded-lg border outline-none">
+                       {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                     </select>
+                     <div className="flex gap-4">
+                       <button onClick={() => setSaving(false)} className="bg-white text-navy px-6 py-2 rounded-lg font-bold border border-borderlight shadow-sm">Cancel</button>
+                       <button onClick={() => {
+                          const cid = document.getElementById('assign-select').value;
+                          handleSave('published', cid);
+                       }} className="bg-successbg text-white px-8 py-2 rounded-lg font-bold hover:bg-opacity-90 transition shadow-md">
+                         Publish & Assign
+                       </button>
+                     </div>
+                   </>
+                 ) : (
+                   <div>
+                     <p className="text-dangerbg text-sm mb-4">You have no classrooms to assign this to.</p>
+                     <button onClick={() => setSaving(false)} className="bg-white text-navy px-6 py-2 rounded-lg font-bold border border-borderlight shadow-sm">Cancel</button>
+                   </div>
+                 )}
+               </div>
+            ) : (
+               <div className="flex gap-4">
+                 <button onClick={() => handleSave('draft')} disabled={saving || questions.length === 0 || !title} className="bg-white border border-borderlight text-navy px-8 py-3 rounded-lg font-bold hover:bg-gray-50 disabled:opacity-50 transition shadow-sm">
+                   {saving === 'draft' ? "Saving..." : "Save Draft"}
+                 </button>
+                 <button onClick={() => setSaving('assigning')} disabled={saving || questions.length === 0 || !title} className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 disabled:opacity-50 transition shadow-md">
+                   Publish Assessment
+                 </button>
+               </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const App = () => {
+      // Auth State
+      const [session, setSession] = useState(null);
+      const [role, setRole] = useState(null);
+      const [authLoading, setAuthLoading] = useState(true);
+      const [supabaseClient, setSupabaseClient] = useState(null);
+
+      // Navigation State
+      const [activeTab, setActiveTab] = useState('overview');
+
+      // Data State
+      const [students, setStudents] = useState([]);
+      const [classrooms, setClassrooms] = useState([]);
+      const [activeClassroom, setActiveClassroom] = useState(null);
+            const [studentAssessments, setStudentAssessments] = useState([]);
+            const [teacherAssessments, setTeacherAssessments] = useState([]);
+      const [teacherInsights, setTeacherInsights] = useState(null);
+      const [takingAssessment, setTakingAssessment] = useState(null);
+      const [takingData, setTakingData] = useState(null);
+      const [takingAnswers, setTakingAnswers] = useState({});
+      const [takingIndex, setTakingIndex] = useState(0);
+      const [takingResult, setTakingResult] = useState(null);
+            const [studentLearning, setStudentLearning] = useState([]);
+      const [practiceGap, setPracticeGap] = useState(null);
+      const [practiceData, setPracticeData] = useState(null);
+      const [practiceAnswer, setPracticeAnswer] = useState('');
+            const [practiceFeedback, setPracticeFeedback] = useState(null);
+      const [practiceGenerating, setPracticeGenerating] = useState(false);
+      
+      const [testTopic, setTestTopic] = useState('');
+      const [testDiff, setTestDiff] = useState('medium');
+      const [testCount, setTestCount] = useState(3);
+      const [isGeneratingTest, setIsGeneratingTest] = useState(false);
+      const [misconceptions, setMisconceptions] = useState([]);
+      const [rootCauses, setRootCauses] = useState([]);
+      const [loading, setLoading] = useState(true);
+            const [importing, setImporting] = useState(false);
+      const [classroomConnectState, setClassroomConnectState] = useState(null); // { status: 'success'|'error', msg: '', detail: '' }
+
+      useEffect(() => {
+        const initAuth = async () => {
+          try {
+            const res = await fetch("/api/config");
+            const config = await res.json();
+            if (config.SUPABASE_URL && config.SUPABASE_ANON_KEY) {
+              const supabase = window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
+              setSupabaseClient(supabase);
+
+              // Check active session
+              const { data: { session } } = await supabase.auth.getSession();
+              if (session) {
+                await syncIdentity(session);
+              } else {
+                setAuthLoading(false);
+              }
+
+              // Listen for changes
+              supabase.auth.onAuthStateChange(async (_event, newSession) => {
+                if (newSession && (!session || newSession.access_token !== session.access_token)) {
+                  await syncIdentity(newSession);
+                } else if (!newSession) {
+                  setSession(null);
+                  setRole(null);
+                }
+              });
+            }
+          } catch (e) {
+            console.error("Auth init failed", e);
+            setAuthLoading(false);
+          }
+        };
+        initAuth();
+      }, []);
+
+      const syncIdentity = async (activeSession) => {
+        try {
+          const res = await fetch("/api/auth/sync", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${activeSession.access_token}`
+            }
+          });
+          
+          if (res.ok) {
+            const data = await res.json();
+            setSession(activeSession);
+            setRole(data.role);
+            // Optionally store data.user_id
+          } else {
+            const err = await res.json();
+            alert("Login Failed: " + (err.error || "Unknown error"));
+            supabaseClient?.auth.signOut();
+          }
+        } catch (e) {
+          console.error("Sync error", e);
+        } finally {
+          setAuthLoading(false);
+        }
+      };
+
+      const handleLogin = async () => {
+        if (!supabaseClient) return;
+        await supabaseClient.auth.signInWithOAuth({ 
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin + '/index.html'
+          }
+        });
+      };
+
+      const handleLogout = async () => {
+        if (!supabaseClient) return;
+        await supabaseClient.auth.signOut();
+        window.location.reload();
+      };
+
+      const loadData = async () => {
+        try {
+          const headers = { "Authorization": `Bearer ${session.access_token}` };
+          const [resInsights, resStudents, resClassrooms] = await Promise.all([
+            fetch("/api/classroom/insights"),
+            fetch("/api/students"),
+            fetch("/api/classrooms", { headers })
+          ]);
+          const dataInsights = await resInsights.json();
+          const dataStudents = await resStudents.json();
+          const dataClassrooms = await resClassrooms.json();
+          
+          const resAssessments = await fetch("/api/teacher/assessments", { headers });
+          const dataAssessments = await resAssessments.json();
+          
+          setStudents(dataStudents || []);
+          setClassrooms(dataClassrooms || []);
+          setTeacherAssessments(dataAssessments || []);
+          setMisconceptions(dataInsights.misconceptions || []);
+          setRootCauses(dataInsights.root_causes || []);
+        } catch (e) {
+          console.error("Failed to fetch", e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        if (!session) return;
+        
+        const loadUserSpecificData = async () => {
+           const headers = { "Authorization": `Bearer ${session.access_token}` };
+           try {
+             const resClassrooms = await fetch("/api/classrooms", { headers });
+             const dataClassrooms = await resClassrooms.json();
+             setClassrooms(dataClassrooms || []);
+             
+             const resAssessments = await fetch("/api/student/assessments", { headers });
+             const dataAssessments = await resAssessments.json();
+             setStudentAssessments(dataAssessments || []);
+             
+             const resLearning = await fetch("/api/student/learning", { headers });
+             const dataLearning = await resLearning.json();
+             setStudentLearning(dataLearning || []);
+           } catch (e) { console.error("Error loading classrooms", e); }
+        };
+
+        if (role === 'teacher') {
+          loadData();
+          const interval = setInterval(loadData, 3000);
+          return () => clearInterval(interval);
+        } else if (role === 'student') {
+          loadUserSpecificData();
+        }
+      }, [session, role]);
+
+      const handleConnect = () => {
+        setImporting(true);
+        // Redirect to backend OAuth flow with JWT token
+        window.location.href = `/api/classroom/auth?token=${session.access_token}`;
+      };
+      
+      // Handle OAuth redirect results intercepting root
+      useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const state = urlParams.get('state');
+        const error = urlParams.get('error');
+        
+        if (code && state) {
+           setClassroomConnectState({ status: 'loading', msg: "Finalizing connection...", detail: "Please wait while we securely connect your classrooms." });
+           window.history.replaceState({}, document.title, "/"); // Hide ugly URL tokens immediately
+           
+           fetch(`/api/classroom/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`)
+             .then(res => res.json())
+             .then(data => {
+                if (data.success) {
+                   setClassroomConnectState({ status: 'success', msg: "Google Classroom connected", detail: "Your classrooms have been successfully imported." });
+                   loadData();
+                } else {
+                   setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: data.error || "Unknown error occurred." });
+                }
+             })
+             .catch(err => {
+                setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: "Network error while reaching the server." });
+             });
+        } else if (error) {
+           setClassroomConnectState({ status: 'error', msg: "Couldn't connect to Google Classroom.", detail: "Google returned an error: " + error });
+           window.history.replaceState({}, document.title, "/");
+        }
+      }, []);
+
+      const falseMastery = students.filter(s => s.flagged_false_mastery);
+      const activeStudents = students.filter(s => s.status !== "pending");
+
+      // Framer Motion variants
+      const containerVariants = {
+        hidden: { opacity: 0 },
+        show: {
+          opacity: 1,
+          transition: { staggerChildren: 0.1 }
+        }
+      };
+
+      const itemVariants = {
+        hidden: { opacity: 0, y: 15 },
+        show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+      };
+
+      if (authLoading) {
+        return (
+          <div className="min-h-screen bg-page flex items-center justify-center">
+            <div className="text-navy font-semibold text-xl animate-pulse">ClassroomInsight Workspace Loading...</div>
+          </div>
+        );
+      }
+
+      if (!session) {
+        return (
+          <div className="min-h-screen bg-page flex flex-col items-center justify-center p-6 relative overflow-hidden text-center">
+            
+            <div className="relative z-10 max-w-2xl w-full mx-auto">
+              <div className="w-20 h-20 rounded-2xl bg-navy mx-auto mb-8 flex items-center justify-center text-white font-bold text-4xl font-serif-custom shadow-lg">
+                C
+              </div>
+              <h1 className="text-4xl md:text-5xl font-serif-custom font-bold text-navy mb-6 tracking-tight">ClassroomInsight</h1>
+              
+              <h2 className="text-xl md:text-2xl font-serif-custom font-semibold text-navy mb-4">
+                Understand how students think. Turn every answer into insight.
+              </h2>
+              
+              <p className="text-muted text-base md:text-lg mb-12 max-w-xl mx-auto leading-relaxed">
+                Create intelligent assessments, identify learning gaps, and give every student the right practice.
+              </p>
+              
+              <div className="max-w-sm mx-auto">
+                <button 
+                  onClick={handleLogin}
+                  className="w-full bg-navy text-white py-4 rounded-xl font-bold hover:bg-opacity-90 transition-all shadow-md flex items-center justify-center gap-3 mb-4"
+                >
+                  <svg className="w-5 h-5 bg-white rounded-full p-1 text-navy" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                  Continue with Google
+                </button>
+                <p className="text-sm font-medium text-muted">
+                  For teachers and students
+                </p>
+              </div>
+            </div>
+            
+            {/* Minimal aesthetic background shapes using existing variables */}
+            <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-lavender rounded-full opacity-40 blur-3xl mix-blend-multiply pointer-events-none"></div>
+            <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-[#E8E6F5] rounded-full opacity-50 blur-3xl mix-blend-multiply pointer-events-none"></div>
+          </div>
+        );
+      }
+
+
+      const userName = session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || "User";
+      const userRoleDisplay = role === 'teacher' ? 'Teacher' : 'Student';
+
+      // --- TEACHER VIEWS ---
+      const renderTeacherHome = () => {
+        const hasClassrooms = classrooms.length > 0;
+        return (
+          <div className="space-y-8 animate-fade-in">
+            <h2 className="text-3xl font-serif-custom font-bold text-navy">Welcome back, {userName}</h2>
+            {hasClassrooms ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">My Classrooms</h3>
+                  <p className="text-3xl font-bold text-lavender">{classrooms.length}</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">Active Assessments</h3>
+                  <p className="text-3xl font-bold text-lavender">0</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">Recent Activity</h3>
+                  <p className="text-3xl font-bold text-lavender">{misconceptions.length} Insights</p>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white p-8 rounded-xl shadow-sm border border-borderlight text-center">
+                <p className="text-muted text-lg mb-4">No classrooms connected yet.</p>
+                <button onClick={handleConnect} disabled={importing} className="bg-lavender text-navy px-6 py-2 rounded-md font-semibold hover:bg-opacity-80 transition">
+                  {importing ? "Connecting..." : "Connect Google Classroom"}
+                </button>
+              </div>
+            )}
+            {hasClassrooms && (
+              <div className="mt-8">
+                <button onClick={() => { setActiveTab('create-assessment'); setActiveClassroom(null); }} className="bg-navy text-white px-6 py-3 rounded-lg font-bold hover:bg-opacity-90 shadow-md">
+                  Create Assessment
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const renderTeacherClassroomList = () => {
+         if (classrooms.length === 0) {
+           return (
+             <div className="animate-fade-in text-center py-16">
+               <h2 className="text-2xl font-serif-custom font-bold text-navy mb-4">Classrooms</h2>
+               <p className="text-muted text-lg mb-6">No classrooms connected yet.</p>
+               <button onClick={handleConnect} disabled={importing} className="bg-navy text-white px-6 py-3 rounded-md font-semibold hover:bg-opacity-90 transition">
+                 {importing ? "Connecting..." : "Connect Google Classroom"}
+               </button>
+             </div>
+           );
+         }
+         
+         return (
+           <div className="animate-fade-in">
+             <h2 className="text-3xl font-serif-custom font-bold text-navy mb-8">Classrooms</h2>
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+               {classrooms.map(c => (
+                 <div key={c.id} className="bg-white p-6 rounded-xl shadow-sm border border-borderlight flex flex-col justify-between">
+                   <div>
+                     <h3 className="text-xl font-bold text-navy mb-1">{c.name}</h3>
+                     <p className="text-sm text-muted mb-4">{c.student_count} Students &bull; {c.assessment_count} Assessments</p>
+                   </div>
+                   <button onClick={() => setActiveClassroom(c)} className="w-full bg-lavender text-navy py-2 rounded-lg font-semibold hover:bg-opacity-80 transition mt-4 border border-indigo-100 shadow-sm">
+                     Open Classroom
+                   </button>
+                 </div>
+               ))}
+             </div>
+           </div>
+         );
+      };
+
+      const renderTeacherClassroomDetail = () => {
+         const [roomTab, setRoomTab] = useState('overview');
+         
+         return (
+           <div className="animate-fade-in">
+             <div className="flex items-center gap-4 mb-6">
+               <button onClick={() => setActiveClassroom(null)} className="text-muted hover:text-navy font-semibold">&larr; Back</button>
+               <h2 className="text-3xl font-serif-custom font-bold text-navy">{activeClassroom.name}</h2>
+             </div>
+             
+             {/* Classroom Sub-navigation */}
+             <div className="flex gap-6 border-b border-borderlight mb-8">
+               <button onClick={() => setRoomTab('overview')} className={`pb-2 font-semibold ${roomTab === 'overview' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Overview</button>
+               <button onClick={() => setRoomTab('assessments')} className={`pb-2 font-semibold ${roomTab === 'assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Assessments</button>
+               <button onClick={() => setRoomTab('students')} className={`pb-2 font-semibold ${roomTab === 'students' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Students</button>
+               <button onClick={() => setRoomTab('insights')} className={`pb-2 font-semibold ${roomTab === 'insights' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Classroom Insights</button>
+             </div>
+             
+             {roomTab === 'overview' && (
+               <div className="space-y-6">
+                 <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                    <h3 className="text-lg font-semibold text-navy mb-2">Classroom Overview</h3>
+                    <p className="text-muted">Welcome to your classroom dashboard. Select a tab to dive deeper.</p>
+                 </div>
+               </div>
+             )}
+             
+             {roomTab === 'assessments' && (
+               <div className="space-y-4">
+                 {teacherAssessments.length === 0 ? (
+                   <div className="text-center py-12 text-muted bg-white rounded-xl shadow-sm border border-borderlight">No assessments published in this classroom yet.</div>
+                 ) : (
+                   teacherAssessments.map(a => (
+                     <div key={a.id} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm flex items-center justify-between group">
+                       <div>
+                         <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded mb-2 inline-block ${a.status === 'published' ? 'bg-successbg text-white' : 'bg-gray-200 text-gray-600'}`}>
+                           {a.status === 'published' ? 'Published' : 'Draft'}
+                         </span>
+                         {a.status === 'published' && <span className="text-xs font-bold uppercase tracking-wider px-2 py-1 rounded mb-2 inline-block bg-indigo-50 text-lavender ml-2">Assigned to {activeClassroom.name}</span>}
+                         <h3 className="text-xl font-bold text-navy mb-1">{a.title}</h3>
+                         <p className="text-sm text-muted">{a.topic} &bull; {a.question_count} Questions</p>
+                       </div>
+                       <button className="bg-lavender text-navy px-6 py-2 rounded-lg font-bold hover:bg-opacity-80 transition border border-indigo-100 shadow-sm">
+                         View Analytics
+                       </button>
+                     </div>
+                   ))
+                 )}
+               </div>
+             )}
+             
+             {roomTab === 'students' && (
+               <div className="bg-card rounded-xl p-6 shadow-soft border border-borderlight">
+                 <div className="overflow-x-auto">
+                   <table className="w-full text-left">
+                     <thead>
+                       <tr className="border-b border-borderlight text-sm text-muted">
+                         <th className="pb-3 font-semibold">Student</th>
+                         <th className="pb-3 font-semibold">Status</th>
+                         <th className="pb-3 font-semibold">Attempts</th>
+                         <th className="pb-3 font-semibold">Diagnosis</th>
+                       </tr>
+                     </thead>
+                     <tbody className="divide-y divide-borderlight">
+                       {students.map((s, i) => (
+                         <tr key={i} className="hover:bg-indigo-50/30 transition-colors">
+                           <td className="py-4">
+                             <div className="font-semibold text-navy">{s.name}</div>
+                             <div className="text-xs text-muted">{s.email}</div>
+                           </td>
+                           <td className="py-4">
+                             <Pill type={s.status === 'mastered' ? 'success' : s.status === 'struggling' ? 'danger' : 'lavender'}>{s.status}</Pill>
+                           </td>
+                           <td className="py-4 font-mono text-sm">{s.attempts || 0}</td>
+                           <td className="py-4 max-w-[200px] truncate text-sm" title={s.misconception}>{s.misconception || '-'}</td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
+               </div>
+             )}
+             
+             {roomTab === 'insights' && renderTeacherInsights()}
+           </div>
+         );
+      };
+
+      const renderTeacherInsights = () => {
+         return (
+           <div className="animate-fade-in space-y-8">
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+               <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                 <h3 className="font-semibold text-navy mb-4">Top Misconceptions</h3>
+                 {misconceptions.length === 0 ? <p className="text-muted text-sm">No data yet.</p> : (
+                   <ul className="space-y-3">
+                     {misconceptions.map((m, i) => (
+                       <li key={i} className="p-3 bg-gray-50 rounded-lg text-sm border border-gray-100 flex justify-between items-center">
+                         <span>{m.misconception}</span>
+                         <span className="font-bold text-navy bg-lavender px-2 py-1 rounded-full text-xs">{m.count} students</span>
+                       </li>
+                     ))}
+                   </ul>
+                 )}
+               </div>
+               <div className="bg-white p-6 rounded-xl border border-borderlight shadow-sm">
+                 <h3 className="font-semibold text-navy mb-4">Prerequisite Root Causes</h3>
+                 {rootCauses.length === 0 ? <p className="text-muted text-sm">No data yet.</p> : (
+                   <ul className="space-y-3">
+                     {rootCauses.map((rc, i) => (
+                       <li key={i} className="p-3 bg-red-50 rounded-lg text-sm border border-red-100 flex flex-col">
+                         <span className="font-semibold text-dangerbg mb-1">{rc.root_cause}</span>
+                         <span className="text-gray-600 text-xs">{rc.recommended_action}</span>
+                       </li>
+                     ))}
+                   </ul>
+                 )}
+               </div>
+             </div>
+           </div>
+         );
+      };
+
+      const renderTeacherMain = () => {
+        if (activeTab === 'classrooms' && activeClassroom) {
+           return renderTeacherClassroomDetail();
+        }
+        
+        switch(activeTab) {
+          case 'home': return renderTeacherHome();
+          case 'classrooms': return renderTeacherClassroomList();
+          case 'assessments': return <div className="text-center py-12 text-muted">No published assessments yet.</div>;
+          case 'insights': return renderTeacherInsights();
+          case 'create-assessment': return <AssessmentCreator session={session} classrooms={classrooms} />;
+          default: return renderTeacherHome();
+        }
+      };
+
+      // --- STUDENT VIEWS ---
+      const renderStudentHome = () => {
+        const hasClassrooms = classrooms.length > 0;
+        return (
+          <div className="space-y-8 animate-fade-in">
+            <h2 className="text-3xl font-serif-custom font-bold text-navy">Welcome, {userName}</h2>
+            {!hasClassrooms ? (
+              <div className="bg-white p-8 rounded-xl shadow-sm border border-borderlight text-center">
+                <p className="text-muted text-lg mb-6">You are not enrolled in a classroom yet.</p>
+                <button className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 shadow-md">
+                  Test My Knowledge
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">My Classrooms</h3>
+                  <p className="text-3xl font-bold text-navy">{classrooms.length}</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">Pending Assessments</h3>
+                  <p className="text-3xl font-bold text-navy">0</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-borderlight">
+                  <h3 className="text-lg font-semibold text-navy mb-2">My Learning</h3>
+                  <p className="text-3xl font-bold text-navy">-</p>
+                </div>
+              </div>
+            )}
+            {hasClassrooms && (
+              <div className="mt-8 text-center md:text-left">
+                <button className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 shadow-md">
+                  Test My Knowledge
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const renderStudentClassroomList = () => {
+         if (classrooms.length === 0) {
+           return (
+             <div className="animate-fade-in text-center py-16">
+               <h2 className="text-2xl font-serif-custom font-bold text-navy mb-4">My Classrooms</h2>
+               <p className="text-muted text-lg mb-6">You are not enrolled in a classroom yet.</p>
+               <button className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 shadow-md">
+                 Test My Knowledge
+               </button>
+             </div>
+           );
+         }
+         
+         return (
+           <div className="animate-fade-in">
+             <h2 className="text-3xl font-serif-custom font-bold text-navy mb-8">My Classrooms</h2>
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+               {classrooms.map(c => (
+                 <div key={c.id} className="bg-white p-6 rounded-xl shadow-sm border border-borderlight flex flex-col justify-between">
+                   <div>
+                     <h3 className="text-xl font-bold text-navy mb-1">{c.name}</h3>
+                     <p className="text-sm text-muted mb-4">{c.teacher} &bull; {c.pending_assessments} Pending</p>
+                   </div>
+                   <button onClick={() => setActiveClassroom(c)} className="w-full bg-lavender text-navy py-2 rounded-lg font-semibold hover:bg-opacity-80 transition mt-4 border border-indigo-100 shadow-sm">
+                     Open Classroom
+                   </button>
+                 </div>
+               ))}
+             </div>
+           </div>
+         );
+      };
+
+      const renderStudentClassroomDetail = () => {
+         const [roomTab, setRoomTab] = useState('assigned');
+         
+         return (
+           <div className="animate-fade-in">
+             <div className="flex items-center gap-4 mb-6">
+               <button onClick={() => setActiveClassroom(null)} className="text-muted hover:text-navy font-semibold">&larr; Back</button>
+               <h2 className="text-3xl font-serif-custom font-bold text-navy">{activeClassroom.name}</h2>
+             </div>
+             
+             {/* Classroom Sub-navigation */}
+             <div className="flex gap-6 border-b border-borderlight mb-8">
+               <button onClick={() => setRoomTab('assigned')} className={`pb-2 font-semibold ${roomTab === 'assigned' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Assigned Assessments</button>
+               <button onClick={() => setRoomTab('completed')} className={`pb-2 font-semibold ${roomTab === 'completed' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Completed Assessments</button>
+               <button onClick={() => setRoomTab('learning')} className={`pb-2 font-semibold ${roomTab === 'learning' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Learning</button>
+             </div>
+             
+             {roomTab === 'assigned' && (
+               <div className="space-y-4">
+                 {studentAssessments.filter(a => a.status === 'assigned').length === 0 ? (
+                   <div className="text-center py-12 text-muted bg-white rounded-xl shadow-sm border border-borderlight">No assigned assessments.</div>
+                 ) : (
+                   studentAssessments.filter(a => a.status === 'assigned').map(a => (
+                     <div key={a.id} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm flex items-center justify-between group">
+                       <div>
+                         <span className="text-xs font-bold text-lavender uppercase tracking-wider bg-indigo-50 px-2 py-1 rounded mb-2 inline-block">New Assessment</span>
+                         <h3 className="text-xl font-bold text-navy mb-1">{a.title}</h3>
+                         <p className="text-sm text-muted">{a.topic} &bull; {a.question_count} Questions</p>
+                       </div>
+                       <button onClick={() => handleStartAssessment(a.id)} className="bg-lavender text-navy px-6 py-2 rounded-lg font-bold hover:bg-opacity-80 transition border border-indigo-100 shadow-sm">
+                         Start Assessment
+                       </button>
+                     </div>
+                   ))
+                 )}
+               </div>
+             )}
+             {roomTab === 'completed' && <div className="text-center py-12 text-muted">No completed assessments yet.</div>}
+             {roomTab === 'learning' && (
+               <div className="space-y-4">
+                 {studentLearning.length === 0 ? (
+                   <div className="text-center py-12 text-muted bg-white rounded-xl shadow-sm border border-borderlight">Complete an assessment to view your learning insights.</div>
+                 ) : (
+                   studentLearning.map((gap, i) => (
+                     <div key={i} className="bg-white p-6 rounded-xl border border-borderlight shadow-sm flex items-center justify-between">
+                       <div>
+                         <span className="text-xs font-bold text-lavender uppercase tracking-wider bg-indigo-50 px-2 py-1 rounded mb-2 inline-block">{gap.topic}</span>
+                         <h4 className="font-bold text-navy text-lg">{gap.misconception || "Pending Diagnosis..."}</h4>
+                       </div>
+                       <Pill type={gap.status === 'mastered' ? 'success' : 'warning'}>{gap.status}</Pill>
+                     </div>
+                   ))
+                 )}
+               </div>
+             )}
+           </div>
+         );
+      };
+
+
+      const handleStartAssessment = async (id) => {
+        setTakingAssessment(id);
+        setTakingAnswers({});
+        setTakingIndex(0);
+        setTakingResult(null);
+        try {
+          const res = await fetch('/api/assessments/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ assessment_id: id })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setTakingData(data.data);
+          } else {
+            alert("Error starting assessment: " + data.error);
+            setTakingAssessment(null);
+          }
+        } catch (e) {
+          alert("Failed to start");
+          setTakingAssessment(null);
+        }
+      };
+
+      const handleSubmitAssessment = async () => {
+        try {
+          const res = await fetch('/api/assessments/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ attempt_id: takingData.attempt_id, answers: takingAnswers })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setTakingResult(data.result);
+            // Refresh assigned list
+            const headers = { "Authorization": `Bearer ${session.access_token}` };
+            fetch("/api/student/assessments", { headers }).then(r => r.json()).then(d => setStudentAssessments(d || []));
+          } else {
+            alert("Error submitting: " + data.error);
+          }
+        } catch (e) { alert("Failed to submit"); }
+      };
+
+      const renderAssessmentTaking = () => {
+        if (takingResult) {
+          return (
+            <div className="max-w-2xl mx-auto py-12 animate-fade-in text-center">
+              <div className="bg-white p-10 rounded-2xl shadow-sm border border-borderlight mb-8">
+                <div className="w-20 h-20 bg-successbg text-white rounded-full flex items-center justify-center text-4xl mx-auto mb-6">✓</div>
+                <h2 className="text-3xl font-serif-custom font-bold text-navy mb-2">Assessment Complete</h2>
+                <p className="text-xl font-semibold text-muted mb-8">Score: {Math.round(takingResult.score)}% ({takingResult.correct_count} / {takingResult.total})</p>
+                
+                <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100 text-left mb-8">
+                  <h3 className="text-lg font-bold text-navy mb-2">Learning Analysis</h3>
+                  <p className="text-navy">Your answers have been analyzed. Check the <b>My Learning</b> tab for personalized insights and practice.</p>
+                </div>
+                
+                <div className="flex justify-center gap-4">
+                  <button onClick={() => setTakingAssessment(null)} className="bg-white text-navy px-8 py-3 rounded-lg font-bold border border-borderlight hover:bg-gray-50 transition shadow-sm">
+                    Back to Classroom
+                  </button>
+                  <button onClick={() => { setTakingAssessment(null); setActiveTab('my-learning'); }} className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 transition shadow-md">
+                    Practice What I Need
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        if (!takingData) return <div className="text-center py-20 text-xl font-bold animate-pulse">Loading Assessment...</div>;
+
+        const q = takingData.questions[takingIndex];
+        const isLast = takingIndex === takingData.questions.length - 1;
+
+        return (
+          <div className="max-w-3xl mx-auto py-8 animate-fade-in">
+            <div className="mb-8 flex justify-between items-center">
+               <h2 className="text-2xl font-serif-custom font-bold text-navy">{takingData.assessment.title}</h2>
+               <div className="text-sm font-bold text-muted bg-white px-4 py-2 rounded-full border border-borderlight shadow-sm">
+                 Question {takingIndex + 1} of {takingData.questions.length}
+               </div>
+            </div>
+            
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-borderlight mb-8 relative">
+              <h3 className="text-xl font-semibold text-navy mb-8 leading-relaxed">{q.question_text}</h3>
+              <div className="space-y-4">
+                {q.options.map((opt, i) => {
+                  const isSelected = takingAnswers[q.id] === opt;
+                  return (
+                    <label key={i} className={`flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition ${isSelected ? 'border-lavender bg-indigo-50/50 shadow-sm' : 'border-gray-200 hover:border-gray-300'}`}>
+                      <input 
+                        type="radio" 
+                        name={q.id} 
+                        checked={isSelected}
+                        onChange={() => setTakingAnswers({ ...takingAnswers, [q.id]: opt })}
+                        className="w-5 h-5 text-navy focus:ring-navy" 
+                      />
+                      <span className="text-lg text-navy">{opt}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            
+            <div className="flex justify-between items-center">
+              <button 
+                onClick={() => setTakingIndex(Math.max(0, takingIndex - 1))} 
+                disabled={takingIndex === 0} 
+                className="bg-white text-navy px-6 py-3 rounded-lg font-bold hover:bg-gray-50 disabled:opacity-50 transition border border-borderlight shadow-sm"
+              >
+                Previous
+              </button>
+              
+              {isLast ? (
+                <button 
+                  onClick={handleSubmitAssessment} 
+                  disabled={Object.keys(takingAnswers).length < takingData.questions.length}
+                  className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 disabled:opacity-50 transition shadow-md"
+                >
+                  Submit Assessment
+                </button>
+              ) : (
+                <button 
+                  onClick={() => setTakingIndex(Math.min(takingData.questions.length - 1, takingIndex + 1))} 
+                  className="bg-lavender text-navy px-8 py-3 rounded-lg font-bold hover:bg-opacity-80 transition shadow-sm border border-indigo-100"
+                >
+                  Next
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+
+
+      const startPractice = async (gap) => {
+        setPracticeGap(gap);
+        setPracticeData(null);
+        setPracticeAnswer('');
+        setPracticeFeedback(null);
+        setPracticeGenerating(true);
+        try {
+          const res = await fetch('/api/practice/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ state_id: gap.id })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setPracticeData(data.practice);
+          } else {
+            alert("Error generating practice: " + data.error);
+            setPracticeGap(null);
+          }
+        } catch (e) { alert("Failed to start practice"); setPracticeGap(null); }
+        setPracticeGenerating(false);
+      };
+
+      const submitPractice = async () => {
+        if (!practiceAnswer) return;
+        const isCorrect = practiceAnswer === practiceData.correct_answer;
+        try {
+          const res = await fetch('/api/practice/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ state_id: practiceGap.id, is_correct: isCorrect })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setPracticeFeedback({ isCorrect, text: data.feedback });
+            // refresh learning state
+            const headers = { "Authorization": `Bearer ${session.access_token}` };
+            fetch("/api/student/learning", { headers }).then(r => r.json()).then(d => setStudentLearning(d || []));
+          }
+        } catch (e) { alert("Failed to verify practice"); }
+      };
+
+
+      const handleGenerateTest = async (e) => {
+        e.preventDefault();
+        setIsGeneratingTest(true);
+        try {
+          const res = await fetch('/api/student/test-my-knowledge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ topic: testTopic, difficulty: testDiff, num_questions: Number(testCount) })
+          });
+          const data = await res.json();
+          if (data.success && data.assessment_id) {
+            handleStartAssessment(data.assessment_id);
+          } else {
+            alert("Error generating test: " + (data.error || "Unknown"));
+          }
+        } catch (e) {
+          alert("Failed to generate test");
+        }
+        setIsGeneratingTest(false);
+      };
+
+      const renderTestMyKnowledge = () => {
+        if (isGeneratingTest) {
+          return (
+            <div className="max-w-2xl mx-auto py-20 text-center animate-fade-in">
+              <div className="w-16 h-16 border-4 border-lavender border-t-navy rounded-full animate-spin mx-auto mb-6"></div>
+              <h2 className="text-2xl font-bold text-navy mb-2">Generating your practice test...</h2>
+              <p className="text-muted">Analyzing concept structures and preparing targeted questions.</p>
+            </div>
+          );
+        }
+
+        return (
+          <div className="max-w-2xl mx-auto py-12 animate-fade-in">
+            <div className="bg-white p-10 rounded-2xl shadow-sm border border-borderlight">
+              <h2 className="text-3xl font-serif-custom font-bold text-navy mb-4">Test My Knowledge</h2>
+              <p className="text-lg text-muted mb-8">Take a short AI-generated assessment to discover what you know and what you should practice next.</p>
+              
+              <form onSubmit={handleGenerateTest} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-bold text-navy mb-2">Topic</label>
+                  <input type="text" required value={testTopic} onChange={e => setTestTopic(e.target.value)} placeholder="e.g. Adding Fractions, Photosynthesis, Newton's Laws" className="w-full p-4 rounded-xl border border-borderlight focus:border-lavender focus:ring-2 focus:ring-indigo-50 outline-none transition" />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-bold text-navy mb-2">Difficulty</label>
+                    <select value={testDiff} onChange={e => setTestDiff(e.target.value)} className="w-full p-4 rounded-xl border border-borderlight focus:border-lavender focus:ring-2 focus:ring-indigo-50 outline-none bg-white">
+                      <option value="easy">Easy</option>
+                      <option value="medium">Medium</option>
+                      <option value="hard">Hard</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-navy mb-2">Number of Questions</label>
+                    <select value={testCount} onChange={e => setTestCount(Number(e.target.value))} className="w-full p-4 rounded-xl border border-borderlight focus:border-lavender focus:ring-2 focus:ring-indigo-50 outline-none bg-white">
+                      <option value={3}>3 Questions</option>
+                      <option value={5}>5 Questions</option>
+                      <option value={10}>10 Questions</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <button type="submit" className="w-full bg-navy text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-opacity-90 transition shadow-md mt-4">
+                  Generate Test
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      };
+
+      const renderStudentPractice = () => {
+        if (practiceGenerating) {
+          return <div className="text-center py-20 text-xl font-bold animate-pulse text-navy">Generating personalized practice...</div>;
+        }
+        if (!practiceData) return null;
+        
+        return (
+          <div className="max-w-3xl mx-auto py-8 animate-fade-in">
+            <button onClick={() => setPracticeGap(null)} className="text-muted hover:text-navy font-semibold mb-6">&larr; Back to My Learning</button>
+            <h2 className="text-2xl font-serif-custom font-bold text-navy mb-2">What you're working on</h2>
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-borderlight mb-8">
+               <span className="text-xs font-bold text-lavender uppercase tracking-wider bg-indigo-50 px-2 py-1 rounded mb-2 inline-block">{practiceGap.topic}</span>
+               <h3 className="text-xl font-bold text-navy capitalize mb-4">{practiceGap.misconception}</h3>
+               <p className="text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">{practiceData.explanation}</p>
+            </div>
+            
+            <div className="bg-indigo-50 p-8 rounded-2xl shadow-sm border border-indigo-100 mb-8">
+              <h3 className="text-xl font-semibold text-navy mb-6">Practice Question</h3>
+              <p className="text-lg text-navy mb-6 font-medium">{practiceData.question}</p>
+              
+              <div className="space-y-3 mb-8">
+                {practiceData.options.map((opt, i) => {
+                  const isSelected = practiceAnswer === opt;
+                  let bgClass = isSelected ? 'border-lavender bg-white shadow-sm' : 'border-gray-200 bg-white hover:border-indigo-200';
+                  
+                  if (practiceFeedback) {
+                     if (opt === practiceData.correct_answer) bgClass = 'border-successbg bg-green-50 shadow-sm';
+                     else if (isSelected && !practiceFeedback.isCorrect) bgClass = 'border-dangerbg bg-red-50 shadow-sm';
+                     else bgClass = 'border-gray-200 bg-gray-50 opacity-50';
+                  }
+                  
+                  return (
+                    <label key={i} className={`flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition ${bgClass}`}>
+                      <input 
+                        type="radio" 
+                        name="practice-opt" 
+                        checked={isSelected}
+                        onChange={() => !practiceFeedback && setPracticeAnswer(opt)}
+                        disabled={practiceFeedback !== null}
+                        className="w-5 h-5 text-navy focus:ring-navy" 
+                      />
+                      <span className="text-md font-semibold text-navy">{opt}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              
+              {practiceFeedback ? (
+                <div className={`p-4 rounded-xl font-bold mb-6 ${practiceFeedback.isCorrect ? 'bg-green-100 text-successbg' : 'bg-red-100 text-dangerbg'}`}>
+                  {practiceFeedback.text}
+                </div>
+              ) : (
+                <button 
+                  onClick={submitPractice} 
+                  disabled={!practiceAnswer}
+                  className="bg-navy text-white px-8 py-3 rounded-lg font-bold hover:bg-opacity-90 disabled:opacity-50 transition shadow-md w-full md:w-auto"
+                >
+                  Submit Answer
+                </button>
+              )}
+              
+              {practiceFeedback && (
+                <div className="flex gap-4">
+                  <button onClick={() => setPracticeGap(null)} className="bg-white text-navy px-6 py-2 rounded-lg font-bold border border-borderlight shadow-sm">Done</button>
+                  {!practiceFeedback.isCorrect && (
+                    <button onClick={() => startPractice(practiceGap)} className="bg-lavender text-navy px-6 py-2 rounded-lg font-bold shadow-sm">Next Practice</button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+      const renderStudentLearning = () => {
+        if (practiceGap) return renderStudentPractice();
+
+        const gaps = studentLearning.filter(s => s.status !== 'mastered' && s.status !== 'verified');
+        
+        return (
+          <div className="animate-fade-in max-w-5xl mx-auto py-8">
+            <h2 className="text-3xl font-serif-custom font-bold text-navy mb-8">My Learning</h2>
+            
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-borderlight mb-8">
+              <h3 className="text-xl font-semibold text-navy mb-6">Current Learning Gaps</h3>
+              
+              {gaps.length === 0 ? (
+                <div className="text-center py-12 text-muted bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                  You have no active learning gaps. Great job!
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {gaps.map((gap, i) => (
+                    <div key={i} className="bg-indigo-50/30 p-6 rounded-xl border border-indigo-100 flex flex-col justify-between shadow-sm hover:shadow-md transition">
+                      <div>
+                        <span className="text-xs font-bold text-lavender uppercase tracking-wider bg-white px-2 py-1 rounded shadow-sm border border-indigo-50 mb-3 inline-block">{gap.topic}</span>
+                        <h4 className="font-bold text-navy text-lg mb-2 capitalize">{gap.misconception || "Pending Diagnosis..."}</h4>
+                        <p className="text-sm text-muted mb-4">Status: <span className="font-semibold text-navy">{gap.status}</span></p>
+                      </div>
+                      <button onClick={() => startPractice(gap)} className="w-full bg-navy text-white px-4 py-2 rounded-lg font-bold hover:bg-opacity-90 transition shadow-sm mt-2">
+                        Recommended Practice
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+      const renderStudentMain = () => {
+        if (takingAssessment) return renderAssessmentTaking();
+        
+        if (activeTab === 'my-classrooms' && activeClassroom) {
+           return renderStudentClassroomDetail();
+        }
+        
+        switch(activeTab) {
+          case 'home': return renderStudentHome();
+          case 'my-classrooms': return renderStudentClassroomList();
+          case 'my-assessments': return <div className="text-center py-12 text-muted">No pending assessments.</div>;
+          case 'my-learning': return renderStudentLearning();
+          case 'test-my-knowledge': return renderTestMyKnowledge();
+          default: return renderStudentHome();
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-page text-navy flex flex-col">
+          {/* UNIFIED HEADER */}
+          <header className="bg-card border-b border-borderlight sticky top-0 z-50">
+            <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+              
+              <div className="flex items-center gap-8">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded bg-navy flex items-center justify-center text-white font-bold font-serif-custom shadow-sm">C</div>
+                  <h1 className="font-bold text-lg tracking-tight text-navy">ClassroomInsight</h1>
+                </div>
+                
+                {/* ROLE SPECIFIC NAVIGATION */}
+                {role === 'teacher' ? (
+                  <nav className="hidden md:flex gap-6">
+                    <button onClick={() => { setActiveTab('home'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'home' || !activeTab ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Home</button>
+                    <button onClick={() => { setActiveTab('classrooms'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'classrooms' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Classrooms</button>
+                    <button onClick={() => { setActiveTab('assessments'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Assessments</button>
+                    <button onClick={() => { setActiveTab('insights'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'insights' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Insights</button>
+                    <button onClick={() => { setActiveTab('create-assessment'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'create-assessment' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Create Assessment</button>
+                  </nav>
+                ) : (
+                  <nav className="hidden md:flex gap-6">
+                    <button onClick={() => { setActiveTab('home'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'home' || !activeTab ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Home</button>
+                    <button onClick={() => { setActiveTab('my-classrooms'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-classrooms' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Classrooms</button>
+                    <button onClick={() => { setActiveTab('my-assessments'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-assessments' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Assessments</button>
+                    <button onClick={() => { setActiveTab('my-learning'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'my-learning' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>My Learning</button>
+                    <button onClick={() => { setActiveTab('test-my-knowledge'); setActiveClassroom(null); }} className={`text-sm font-semibold transition-colors ${activeTab === 'test-my-knowledge' ? 'text-navy border-b-2 border-navy' : 'text-muted hover:text-navy'}`}>Test My Knowledge</button>
+                  </nav>
+                )}
+              </div>
+              
+              <div className="flex items-center gap-6">
+                <div className="hidden md:flex flex-col items-end">
+                   <span className="text-sm font-bold text-navy leading-tight">{userName}</span>
+                   <span className="text-xs font-semibold text-muted uppercase tracking-wider">{userRoleDisplay}</span>
+                </div>
+                <button onClick={handleLogout} className="text-sm font-semibold text-dangerbg hover:underline px-3 py-1 border border-transparent hover:border-dangerbg rounded transition">
+                  Sign Out
+                </button>
+              </div>
+
+            </div>
+          </header>
+
+          {/* MAIN CONTENT AREA */}
+          <main className="flex-1 max-w-7xl mx-auto px-6 py-12 w-full">
+            {role === 'teacher' ? renderTeacherMain() : renderStudentMain()}
+          </main>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

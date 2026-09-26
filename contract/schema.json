@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://classroominsight/contract/schema.json",
   "title": "ClassroomInsight Contract Schema",
-  "description": "Frozen shared contract for the ClassroomInsight multi-agent system. Defines the shared student-state object and the output contracts for Person C agents.",
+  "description": "Frozen shared contract for the ClassroomInsight multi-agent system. Defines the shared student-state object and the output contracts for Classroom Insights agents.",
 
   "$defs": {
 
@@ -45,7 +45,7 @@
 
     "StudentState": {
       "title": "StudentState",
-      "description": "Shared student-state object. Written exclusively by Person B (loop_controller.py) into shared/live_state.json. Read by Person C. Must contain exactly these 10 fields.",
+      "description": "Shared student-state object. Written exclusively by Personalized Practice (loop_controller.py) into shared/live_state.json. Read by Classroom Insights. Must contain exactly these 10 fields.",
       "type": "object",
       "required": [
         "student_id",
@@ -120,7 +120,7 @@
 
     "LiveState": {
       "title": "LiveState",
-      "description": "Contents of shared/live_state.json. A JSON array of StudentState objects. Written exclusively by Person B's loop_controller.py after every successful advance().",
+      "description": "Contents of shared/live_state.json. A JSON array of StudentState objects. Written exclusively by Personalized Practice's loop_controller.py after every successful advance().",
       "type": "array",
       "items": {
         "$ref": "#/$defs/StudentState"

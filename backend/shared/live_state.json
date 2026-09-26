@@ -1,0 +1,32 @@
+[
+  {
+    "student_id": "s1",
+    "topic": "force_concept",
+    "misconception": "thinks force depends on mass alone, ignoring acceleration",
+    "status": "verified",
+    "attempts": 1,
+    "resource_given": "Analogy: a ratio is a recipe. If a recipe calls for 2 parts flour to 1 part sugar, doubling the batch means 4 parts flour to 2 parts sugar — the ratio stays the same.",
+    "approach_used": "analogy",
+    "previous_approaches": [
+      "analogy"
+    ],
+    "verification_result": "surface_mastery",
+    "flagged_false_mastery": true
+  },
+  {
+    "student_id": "s2",
+    "topic": "force_concept",
+    "misconception": "thinks force depends on mass alone, ignoring acceleration",
+    "status": "verified",
+    "attempts": 2,
+    "resource_given": "Visual: draw two bars side by side representing the quantities in the ratio. Show that scaling both bars by the same factor preserves the ratio.",
+    "approach_used": "visual_description",
+    "previous_approaches": [
+      "worked_example",
+      "analogy",
+      "visual_description"
+    ],
+    "verification_result": "surface_mastery",
+    "flagged_false_mastery": true
+  }
+]
