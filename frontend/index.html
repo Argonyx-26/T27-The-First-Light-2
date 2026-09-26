@@ -951,8 +951,8 @@
                    <ul className="space-y-3">
                      {misconceptions.map((m, i) => (
                        <li key={i} className="p-3 bg-gray-50 rounded-lg text-sm border border-gray-100 flex justify-between items-center">
-                         <span>{m.misconception}</span>
-                         <span className="font-bold text-navy bg-lavender px-2 py-1 rounded-full text-xs">{m.count} students</span>
+                         <span>{m.learning_gap}</span>
+                         <span className="font-bold text-navy bg-lavender px-2 py-1 rounded-full text-xs">{m.percentage}% ({m.count} students)</span>
                        </li>
                      ))}
                    </ul>
@@ -1162,13 +1162,14 @@
             const headers = { "Authorization": `Bearer ${session.access_token}` };
             fetch("/api/student/assessments", { headers }).then(r => r.json()).then(d => setStudentAssessments(d || []));
             // Fetch learning gaps created from this submission
-            fetch("/api/student/learning", { headers }).then(r => r.json()).then(gaps => {
-              const unresolved = (gaps || []).filter(g => g.status !== 'mastered' && g.status !== 'verified');
-              setStudentLearning(gaps || []);
+            fetch("/api/student/learning", { headers }).then(r => r.json()).then(dataLearning => {
+              const states = dataLearning.states || dataLearning || [];
+              const unresolved = states.filter(g => g.status !== 'mastered' && g.status !== 'verified');
+              setStudentLearning(states);
               setFollowUpGaps(unresolved);
               setFollowUpIndex(0);
               setFollowUpMode(false);
-            });
+            }).catch(e => console.error("Error fetching gaps", e));
           } else {
             alert("Error submitting: " + data.error);
           }

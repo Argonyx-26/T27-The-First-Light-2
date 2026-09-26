@@ -543,11 +543,15 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
 
                 assessment_ids = list(set([a["assessment_id"] for a in (assignments_res.data or [])]))
                 avg_score = None
+                active_students = set()
                 if assessment_ids:
-                    attempts_res = supabase_admin.table("attempts").select("score, status").in_("assessment_id", assessment_ids).execute()
+                    attempts_res = supabase_admin.table("attempts").select("student_id, score, status").in_("assessment_id", assessment_ids).execute()
                     scored = [a for a in (attempts_res.data or []) if a.get("status") == "evaluated" and a.get("score") is not None]
                     if scored:
                         avg_score = round(sum(a["score"] for a in scored) / len(scored))
+                        active_students = set([a["student_id"] for a in scored])
+
+                total_active = len(active_students) if active_students else (len(student_ids) or 1)
 
                 gaps_map = {}
                 support_list = []
@@ -565,7 +569,12 @@ class ClassroomInsightHandler(http.server.SimpleHTTPRequestHandler):
                                 "status": status,
                             })
 
-                common_gaps = sorted([{"learning_gap": k, "count": v} for k, v in gaps_map.items()], key=lambda x: x["count"], reverse=True)
+                common_gaps = []
+                for k, v in gaps_map.items():
+                    pct = int(round((v / total_active) * 100))
+                    common_gaps.append({"learning_gap": k, "count": v, "percentage": min(100, pct)})
+                
+                common_gaps = sorted(common_gaps, key=lambda x: x["count"], reverse=True)
 
                 return self._send_json({
                     "success": True,
